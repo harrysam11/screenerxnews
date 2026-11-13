@@ -214,6 +214,18 @@ class PaperAccountResponse(BaseModel):
     win_rate: Decimal
     profit_factor: Decimal
 
+class IntentState(str, Enum):
+    CREATED = "CREATED"
+    POLICY_REJECTED = "POLICY_REJECTED"
+    AWAITING_APPROVAL = "AWAITING_APPROVAL"
+    APPROVED = "APPROVED"
+    SIGNED = "SIGNED"
+    BROADCAST = "BROADCAST"
+    CONFIRMED = "CONFIRMED"
+    FAILED = "FAILED"
+    EXPIRED = "EXPIRED"
+    CANCELLED = "CANCELLED"
+
 # Trade Approval Gateway Schemas (AUD-03 & AUD-05)
 class TradeIntentRequest(BaseModel):
     asset_id: str
@@ -224,6 +236,11 @@ class TradeIntentRequest(BaseModel):
     output_mint: str
     input_amount_raw: Decimal
     max_slippage_bps: int = Field(default=150, ge=10, le=500)
+    chain_id: str = Field(default="solana:mainnet", description="CAIP-2 Chain Identifier")
+    destination_router: Optional[str] = None
+    strategy_id: Optional[str] = None
+    strategy_version: Optional[str] = None
+    nonce: Optional[str] = None
 
 class TradeIntentResponse(BaseModel):
     intent_id: str
@@ -241,3 +258,6 @@ class TradeIntentResponse(BaseModel):
 class TradeApprovalRequest(BaseModel):
     transaction_message_hash: str
     signed_by_address: str
+    signature: Optional[str] = None
+    nonce: Optional[str] = None
+

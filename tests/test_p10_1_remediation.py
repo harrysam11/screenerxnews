@@ -12,7 +12,7 @@ from app.core.chains import chain_registry
 from app.core.config import settings
 from app.services.multichain_scorer import multichain_scorer
 from app.schemas.contracts import TriState, EvidenceStatus
-from app.api.v1.execution import _INTENTS_REGISTRY
+from app.services.execution_store import execution_intent_store
 
 client = TestClient(app)
 
@@ -140,7 +140,10 @@ def test_execution_intent_zero_trust_approvals():
     expired_id = create_expired.json()["intent_id"]
     expired_hash = create_expired.json()["transaction_message_hash"]
     # Artificially expire the intent TTL in store
-    _INTENTS_REGISTRY[expired_id]["expires_at"] = datetime.now(timezone.utc) - timedelta(seconds=10)
+    with execution_intent_store._get_connection() as conn:
+        conn.execute("UPDATE execution_intents SET expires_at = ? WHERE intent_id = ?",
+                     ((datetime.now(timezone.utc) - timedelta(seconds=10)).isoformat(), expired_id))
+        conn.commit()
 
     res_410 = client.post(f"/api/v1/execution/approve/{expired_id}", json={
         "transaction_message_hash": expired_hash,

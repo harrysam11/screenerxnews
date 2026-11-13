@@ -12,8 +12,10 @@ htmlcov/
 *.log
 .DS_Store
 
-# Environment and secrets
-.env
-.env.*
-!.env.example
+# Local database files
+*.db
+*.db-wal
+*.db-shm
+data/
+
 

@@ -1,0 +1,259 @@
+import os
+import sqlite3
+import threading
+from typing import Dict, Any, List, Optional
+from decimal import Decimal
+from datetime import datetime, timezone
+
+class LedgerError(Exception):
+    """Base error for financial ledger violations."""
+    pass
+
+class UnbalancedJournalError(LedgerError):
+    """Raised when a journal's debits do not equal its credits or line count < 2."""
+    pass
+
+class DuplicatePostingError(LedgerError):
+    """Raised when a journal with the same idempotency key is posted twice."""
+    pass
+
+class ImmutableLedgerError(LedgerError):
+    """Raised when an attempt is made to update or delete a posted ledger line or journal."""
+    pass
+
+class DoubleEntryLedgerService:
+    """
+    ACID-compliant double-entry ledger engine enforcing:
+    - At least 2 ledger lines per journal.
+    - Sum of Debits == Sum of Credits per currency / valuation rate.
+    - Exact integer and Decimal precision without floating point drift.
+    - Append-only immutability (UPDATE and DELETE prohibited).
+    - Idempotency key deduplication.
+    - Atomic rollback on partial failure.
+    """
+    VALID_ACCOUNT_CODES = {
+        "WALLET_SOL", "WALLET_TOKEN", "EXPENSE_NETWORK_FEE", "EXPENSE_DEX_FEE", "REALIZED_PNL"
+    }
+
+    def __init__(self, db_path: Optional[str] = None):
+        if db_path is None:
+            base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../data"))
+            os.makedirs(base_dir, exist_ok=True)
+            self.db_path = os.path.join(base_dir, "ledger.db")
+        else:
+            self.db_path = db_path
+
+        self._lock = threading.Lock()
+        self._init_db()
+
+    def _get_connection(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path, timeout=10.0, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode = WAL;")
+        conn.execute("PRAGMA foreign_keys = ON;")
+        return conn
+
+    def _init_db(self):
+        with self._lock:
+            with self._get_connection() as conn:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS ledger_journals (
+                        id TEXT PRIMARY KEY,
+                        transaction_signature TEXT UNIQUE,
+                        order_id TEXT,
+                        idempotency_key TEXT NOT NULL UNIQUE,
+                        journal_type TEXT NOT NULL,
+                        description TEXT NOT NULL,
+                        posted_at TEXT NOT NULL
+                    );
+                """)
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS ledger_lines (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        journal_id TEXT NOT NULL REFERENCES ledger_journals(id) ON DELETE RESTRICT,
+                        account_code TEXT NOT NULL,
+                        wallet_address TEXT NOT NULL,
+                        mint_address TEXT NOT NULL,
+                        debit_amount_raw TEXT NOT NULL,
+                        credit_amount_raw TEXT NOT NULL,
+                        usd_rate TEXT NOT NULL,
+                        CHECK (CAST(debit_amount_raw AS NUMERIC) >= 0 AND CAST(credit_amount_raw AS NUMERIC) >= 0)
+                    );
+                """)
+                # Database triggers enforcing immutability (LEDGER-05, LEDGER-06)
+                conn.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_prevent_journal_update
+                    BEFORE UPDATE ON ledger_journals
+                    BEGIN
+                        SELECT RAISE(FAIL, 'FINANCIAL INTEGRITY VIOLATION (LEDGER-05): Posted ledger journals cannot be modified.');
+                    END;
+                """)
+                conn.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_prevent_journal_delete
+                    BEFORE DELETE ON ledger_journals
+                    BEGIN
+                        SELECT RAISE(FAIL, 'FINANCIAL INTEGRITY VIOLATION (LEDGER-06): Posted ledger journals cannot be deleted.');
+                    END;
+                """)
+                conn.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_prevent_line_update
+                    BEFORE UPDATE ON ledger_lines
+                    BEGIN
+                        SELECT RAISE(FAIL, 'FINANCIAL INTEGRITY VIOLATION (LEDGER-05): Posted ledger lines cannot be modified.');
+                    END;
+                """)
+                conn.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_prevent_line_delete
+                    BEFORE DELETE ON ledger_lines
+                    BEGIN
+                        SELECT RAISE(FAIL, 'FINANCIAL INTEGRITY VIOLATION (LEDGER-06): Posted ledger lines cannot be deleted.');
+                    END;
+                """)
+                conn.commit()
+
+    def post_journal(
+        self,
+        journal_id: str,
+        idempotency_key: str,
+        journal_type: str,
+        description: str,
+        lines: List[Dict[str, Any]],
+        transaction_signature: Optional[str] = None,
+        order_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Atomically posts a double-entry balanced journal.
+        - LEDGER-01: Balanced journal succeeds.
+        - LEDGER-02: Unbalanced journal fails.
+        - LEDGER-03: Empty journal fails (< 2 lines).
+        - LEDGER-04: Single-line journal fails (< 2 lines).
+        - LEDGER-07: Atomic rollback on failure.
+        - LEDGER-08: Duplicate posting rejected.
+        """
+        # 1. LEDGER-03 & LEDGER-04: Validate Line Count (>= 2 lines required)
+        if not lines or len(lines) < 2:
+            raise UnbalancedJournalError(
+                f"LEDGER VIOLATION (LEDGER-03/04): Every posted journal must contain at least 2 lines (received {len(lines) if lines else 0})."
+            )
+
+        # 2. LEDGER-02: Validate Double-Entry Balance
+        total_debits_usd = Decimal("0.0")
+        total_credits_usd = Decimal("0.0")
+
+        parsed_lines = []
+        for line in lines:
+            account = line.get("account_code")
+            if account not in self.VALID_ACCOUNT_CODES:
+                raise LedgerError(f"Invalid account code: {account}")
+
+            debit = Decimal(str(line.get("debit_amount_raw", 0)))
+            credit = Decimal(str(line.get("credit_amount_raw", 0)))
+            usd_rate = Decimal(str(line.get("usd_rate", 1.0)))
+
+            if debit < Decimal("0") or credit < Decimal("0"):
+                raise LedgerError("Debits and credits must be non-negative")
+            if debit == Decimal("0") and credit == Decimal("0"):
+                raise LedgerError("Ledger line must have at least one non-zero side")
+
+            total_debits_usd += debit * usd_rate
+            total_credits_usd += credit * usd_rate
+
+            parsed_lines.append({
+                "account_code": account,
+                "wallet_address": line["wallet_address"],
+                "mint_address": line["mint_address"],
+                "debit_amount_raw": str(debit),
+                "credit_amount_raw": str(credit),
+                "usd_rate": str(usd_rate)
+            })
+
+        if total_debits_usd != total_credits_usd:
+            raise UnbalancedJournalError(
+                f"DOUBLE-ENTRY BALANCE VIOLATION (LEDGER-02): Total debits ({total_debits_usd}) != Total credits ({total_credits_usd})."
+            )
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        # 3. Atomic Database Insertion with Rollback Protection
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                # Check idempotency duplicate
+                cur = conn.execute("SELECT id FROM ledger_journals WHERE idempotency_key = ?", (idempotency_key,))
+                if cur.fetchone():
+                    raise DuplicatePostingError(
+                        f"DUPLICATE POSTING VIOLATION (LEDGER-08): Idempotency key '{idempotency_key}' already consumed."
+                    )
+
+                conn.execute("BEGIN TRANSACTION;")
+                conn.execute("""
+                    INSERT INTO ledger_journals (
+                        id, transaction_signature, order_id, idempotency_key, journal_type, description, posted_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    journal_id, transaction_signature, order_id, idempotency_key, journal_type, description, now_iso
+                ))
+
+                for pl in parsed_lines:
+                    conn.execute("""
+                        INSERT INTO ledger_lines (
+                            journal_id, account_code, wallet_address, mint_address, debit_amount_raw, credit_amount_raw, usd_rate
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        journal_id, pl["account_code"], pl["wallet_address"], pl["mint_address"],
+                        pl["debit_amount_raw"], pl["credit_amount_raw"], pl["usd_rate"]
+                    ))
+
+                conn.commit()
+                return {
+                    "journal_id": journal_id,
+                    "idempotency_key": idempotency_key,
+                    "status": "POSTED",
+                    "lines_count": len(parsed_lines),
+                    "total_usd": str(total_debits_usd),
+                    "posted_at": now_iso
+                }
+            except Exception as e:
+                conn.rollback()
+                if "UNIQUE constraint failed" in str(e):
+                    raise DuplicatePostingError(f"Duplicate posting rejected: {e}")
+                raise
+            finally:
+                conn.close()
+
+    def get_journal(self, journal_id: str) -> Optional[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            cur = conn.execute("SELECT * FROM ledger_journals WHERE id = ?", (journal_id,))
+            j_row = cur.fetchone()
+            if not j_row:
+                return None
+            journal = dict(j_row)
+            l_cur = conn.execute("SELECT * FROM ledger_lines WHERE journal_id = ? ORDER BY id ASC", (journal_id,))
+            journal["lines"] = [dict(r) for r in l_cur.fetchall()]
+            return journal
+
+    def mutate_journal(self, journal_id: str, new_description: str) -> None:
+        """Attempts to mutate a posted journal, triggering immutability violation (LEDGER-05)."""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                conn.execute("UPDATE ledger_journals SET description = ? WHERE id = ?", (new_description, journal_id))
+                conn.commit()
+            except sqlite3.DatabaseError as e:
+                raise ImmutableLedgerError(f"LEDGER-05 VIOLATION: {e}")
+            finally:
+                conn.close()
+
+    def delete_journal(self, journal_id: str) -> None:
+        """Attempts to delete a posted journal, triggering immutability violation (LEDGER-06)."""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                conn.execute("DELETE FROM ledger_journals WHERE id = ?", (journal_id,))
+                conn.commit()
+            except sqlite3.DatabaseError as e:
+                raise ImmutableLedgerError(f"LEDGER-06 VIOLATION: {e}")
+            finally:
+                conn.close()
+
+double_entry_ledger_service = DoubleEntryLedgerService()
