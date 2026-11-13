@@ -4,7 +4,7 @@
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------
--- 1. CHAIN REGISTRY (CAIP-2 Identifiers)
+-- 1. CHAIN REGISTRY & INFRASTRUCTURE (CAIP-2 Identifiers)
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS chains (
     id TEXT PRIMARY KEY, -- CAIP-2: 'solana:mainnet', 'eip155:1', 'eip155:8453', 'eip155:56'
@@ -19,6 +19,53 @@ CREATE TABLE IF NOT EXISTS chains (
     rpc_urls JSONB NOT NULL DEFAULT '[]'::jsonb,
     explorer_base_url TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS chain_networks (
+    chain_id TEXT PRIMARY KEY REFERENCES chains(id) ON DELETE CASCADE,
+    network_type TEXT NOT NULL, -- 'solana_cluster', 'evm_mainnet', 'evm_l2_rollup'
+    consensus_mechanism TEXT NOT NULL DEFAULT 'pos',
+    block_time_target_ms INTEGER NOT NULL DEFAULT 400,
+    supports_eip1559 BOOLEAN NOT NULL DEFAULT FALSE,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS chain_rpc_providers (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    chain_id TEXT NOT NULL REFERENCES chains(id) ON DELETE CASCADE,
+    provider_name TEXT NOT NULL,
+    endpoint_url TEXT NOT NULL,
+    priority SMALLINT NOT NULL DEFAULT 1,
+    weight SMALLINT NOT NULL DEFAULT 100,
+    rate_limit_rps INTEGER NOT NULL DEFAULT 10,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS chain_provider_health (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    provider_id UUID NOT NULL REFERENCES chain_rpc_providers(id) ON DELETE CASCADE,
+    checked_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    latency_ms INTEGER NOT NULL,
+    is_healthy BOOLEAN NOT NULL DEFAULT TRUE,
+    latest_block_number BIGINT,
+    error_message TEXT
+);
+
+CREATE TABLE IF NOT EXISTS chain_sync_cursors (
+    chain_id TEXT PRIMARY KEY REFERENCES chains(id) ON DELETE CASCADE,
+    last_synced_block BIGINT NOT NULL DEFAULT 0,
+    last_synced_hash TEXT,
+    last_synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    is_syncing BOOLEAN NOT NULL DEFAULT FALSE
+);
+
+CREATE TABLE IF NOT EXISTS chain_adapter_versions (
+    chain_id TEXT PRIMARY KEY REFERENCES chains(id) ON DELETE CASCADE,
+    adapter_class TEXT NOT NULL,
+    version TEXT NOT NULL,
+    capabilities JSONB NOT NULL DEFAULT '[]'::jsonb,
+    registered_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- Seed initial supported networks
@@ -52,7 +99,7 @@ ALTER TABLE pools
     ADD COLUMN IF NOT EXISTS factory_address TEXT;
 
 -- ----------------------------------------------------------------------------
--- 3. EVM REORGANIZATION & BLOCK CANONICALITY TRACKER
+-- 3. EVM REORGANIZATION, BLOCKS & EVENT OBSERVATIONS
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS chain_blocks (
     chain_id TEXT NOT NULL REFERENCES chains(id) ON DELETE CASCADE,
@@ -76,6 +123,22 @@ CREATE TABLE IF NOT EXISTS chain_reorg_events (
     canonical_block_hashes JSONB NOT NULL,
     reverted_events_count INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL CHECK (status IN ('DETECTED', 'REVERTED', 'RECONCILED'))
+);
+
+CREATE TABLE IF NOT EXISTS chain_event_observations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    chain_id TEXT NOT NULL REFERENCES chains(id) ON DELETE CASCADE,
+    block_number BIGINT NOT NULL,
+    block_hash TEXT NOT NULL,
+    tx_hash TEXT NOT NULL,
+    log_index INTEGER NOT NULL,
+    event_signature TEXT,
+    emitter_address TEXT NOT NULL,
+    raw_topics JSONB NOT NULL DEFAULT '[]'::jsonb,
+    raw_data TEXT,
+    is_canonical BOOLEAN NOT NULL DEFAULT TRUE,
+    observed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_chain_event_log UNIQUE (chain_id, tx_hash, log_index)
 );
 
 -- ----------------------------------------------------------------------------
