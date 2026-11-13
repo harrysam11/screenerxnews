@@ -1,0 +1,45 @@
+{
+  "name": "WF-20: Simulated Execution Engine",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "paper-execute",
+        "options": {}
+      },
+      "id": "signal-webhook",
+      "name": "Signal Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:8000/api/v1/paper/order",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {}
+      },
+      "id": "post-paper-order",
+      "name": "Execute Paper Order In FastAPI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [440, 300]
+    }
+  ],
+  "connections": {
+    "Signal Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Execute Paper Order In FastAPI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

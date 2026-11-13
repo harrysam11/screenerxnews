@@ -1,0 +1,64 @@
+{
+  "name": "WF-03: Security Scanner Dispatcher",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "scan-token",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Scan Trigger Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.gopluslabs.io/api/v1/solana/token_security?contract_addresses={{ $json.body.mint_address }}",
+        "options": {}
+      },
+      "id": "goplus-call",
+      "name": "GoPlus Token Security API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=http://localhost:8000/api/v1/forensics/token/{{ $('webhook-trigger').item.json.body.mint_address }}",
+        "options": {}
+      },
+      "id": "fetch-consolidated",
+      "name": "Fetch Consolidated Security Scan",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 300]
+    }
+  ],
+  "connections": {
+    "Scan Trigger Webhook": {
+      "main": [
+        [
+          {
+            "node": "GoPlus Token Security API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GoPlus Token Security API": {
+      "main": [
+        [
+          {
+            "node": "Fetch Consolidated Security Scan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

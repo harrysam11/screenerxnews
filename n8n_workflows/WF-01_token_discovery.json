@@ -1,0 +1,93 @@
+{
+  "name": "WF-01: Token Discovery Poller",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 120
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Schedule Trigger (2m)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.dexscreener.com/token-profiles/latest/v1",
+        "options": {}
+      },
+      "id": "http-dex-profiles",
+      "name": "DEX Screener Profiles",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [420, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst solanaTokens = [];\nfor (const item of items) {\n  const data = item.json;\n  if (Array.isArray(data)) {\n    for (const token of data) {\n      if (token.chainId === 'solana') {\n        solanaTokens.push({\n          json: {\n            mint_address: token.tokenAddress,\n            symbol: token.icon ? 'MEME' : null,\n            token_program: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',\n            metadata_uri: token.url\n          }\n        });\n      }\n    }\n  }\n}\nreturn solanaTokens;"
+      },
+      "id": "filter-solana",
+      "name": "Filter Solana Only",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [640, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:8000/api/v1/discovery/register",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "post-fastapi",
+      "name": "Register In FastAPI Core",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [860, 300]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger (2m)": {
+      "main": [
+        [
+          {
+            "node": "DEX Screener Profiles",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DEX Screener Profiles": {
+      "main": [
+        [
+          {
+            "node": "Filter Solana Only",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Solana Only": {
+      "main": [
+        [
+          {
+            "node": "Register In FastAPI Core",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: memecoin_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-memecoin_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-memecoin_secure_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-memecoin_os}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./migrations/001_initial_schema.sql:/docker-entrypoint-initdb.d/001_initial_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-memecoin_user} -d ${POSTGRES_DB:-memecoin_os}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: memecoin_n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=${N8N_USER:-admin}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD:-changeme_n8n_pass}
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=${POSTGRES_DB:-memecoin_os}
+      - DB_POSTGRESDB_USER=${POSTGRES_USER:-memecoin_user}
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD:-memecoin_secure_pass}
+      - DB_POSTGRESDB_SCHEMA=n8n_internal
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY:-random_32_char_encryption_key_here}
+      - GENERIC_TIMEZONE=UTC
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+    driver: local
+  n8n_data:
+    driver: local
