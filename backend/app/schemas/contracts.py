@@ -140,7 +140,7 @@ class OpportunityScoreBreakdown(BaseModel):
     confidence_coverage_pct: Decimal
     evidence_status: EvidenceStatus
 
-# Paper Trading Schemas (AUD-01 & AUD-04)
+# Paper Trading Schemas (AUD-01, AUD-04 & Multi-Chain P7)
 class PaperOrderRequest(BaseModel):
     account_id: str
     client_order_id: str = Field(..., description="Unique idempotency key")
@@ -151,17 +151,21 @@ class PaperOrderRequest(BaseModel):
     output_mint: str = Field(..., description="Mint of token being bought")
     input_amount_raw: Decimal = Field(..., gt=0, description="Exact raw units spent")
     max_slippage_bps: int = Field(default=150, ge=10, le=2000)
+    chain_id: str = Field(default="solana:mainnet", description="CAIP-2 Chain Identifier")
 
 class PaperExecutionEventDTO(BaseModel):
     event_id: str
     event_type: str
     input_amount_raw: Decimal
     output_amount_raw: Decimal
-    effective_price_sol: Decimal
+    effective_price_sol: Decimal = Decimal("0")
+    effective_price_native: Optional[Decimal] = None
     liquidity_impact_bps: int
     simulated_slippage_bps: int
-    simulated_total_fee_lamports: int
+    simulated_total_fee_lamports: int = 0
+    simulated_total_fee_native: Optional[Decimal] = None
     occurred_at: datetime
+    chain_id: str = "solana:mainnet"
 
 class PaperOrderResponse(BaseModel):
     order_id: str
@@ -171,27 +175,42 @@ class PaperOrderResponse(BaseModel):
     input_amount_raw: Decimal
     output_amount_raw: Optional[Decimal] = None
     effective_price_sol: Optional[Decimal] = None
+    effective_price_native: Optional[Decimal] = None
+    chain_id: str = "solana:mainnet"
+    rejection_reason: Optional[str] = None
     execution_events: List[PaperExecutionEventDTO] = []
     created_at: datetime
 
 class PaperPositionResponse(BaseModel):
     position_id: str
     mint_address: str
+    asset_address: Optional[str] = None
+    chain_id: str = "solana:mainnet"
     symbol: Optional[str] = None
     token_amount_raw: Decimal
-    cost_basis_lamports: int
-    current_market_price_sol: Decimal
-    unrealized_pnl_lamports: int
+    cost_basis_lamports: int = 0
+    cost_basis_native: Optional[Decimal] = None
+    current_market_price_sol: Decimal = Decimal("0")
+    current_market_price_native: Optional[Decimal] = None
+    unrealized_pnl_lamports: int = 0
+    unrealized_pnl_native: Optional[Decimal] = None
     opened_at: datetime
 
 class PaperAccountResponse(BaseModel):
     account_id: str
     account_name: str
-    current_virtual_lamports: int
-    allocated_virtual_lamports: int
-    total_equity_lamports: int
-    realized_pnl_lamports: int
-    unrealized_pnl_lamports: int
+    chain_id: str = "solana:mainnet"
+    native_symbol: str = "SOL"
+    current_virtual_lamports: int = 0
+    allocated_virtual_lamports: int = 0
+    total_equity_lamports: int = 0
+    realized_pnl_lamports: int = 0
+    unrealized_pnl_lamports: int = 0
+    current_virtual_balance: Optional[Decimal] = None
+    allocated_virtual_balance: Optional[Decimal] = None
+    total_equity_native: Optional[Decimal] = None
+    realized_pnl_native: Optional[Decimal] = None
+    unrealized_pnl_native: Optional[Decimal] = None
     win_rate: Decimal
     profit_factor: Decimal
 
