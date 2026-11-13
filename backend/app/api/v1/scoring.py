@@ -2,7 +2,7 @@ from decimal import Decimal
 from fastapi import APIRouter, Depends, Path
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
-from app.schemas.contracts import OpportunityScoreBreakdown
+from app.schemas.contracts import OpportunityScoreBreakdown, EvidenceStatus
 
 router = APIRouter(prefix="/scoring", tags=["Scoring Engine"])
 
@@ -36,5 +36,6 @@ async def get_opportunity_score(
         narrative_sentiment_score=n,
         hard_reject_triggered=False,
         rejection_reasons=[],
-        confidence_coverage_pct=Decimal("94.5")
+        confidence_coverage_pct=Decimal("94.5"),
+        evidence_status=EvidenceStatus.VERIFIED
     )

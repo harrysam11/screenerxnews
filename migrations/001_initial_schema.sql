@@ -1,5 +1,5 @@
 -- ============================================================================
--- SOLANA MEMECOIN OS - DATABASE MIGRATION 001
+-- SOLANA MEMECOIN OS - HARDENED DATABASE DDL (V2)
 -- PostgreSQL 14+ compatible
 -- ============================================================================
 
@@ -9,19 +9,20 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 CREATE SCHEMA IF NOT EXISTS n8n_internal;
 
 -- ----------------------------------------------------------------------------
--- 1. ASSETS & POOLS
+-- 1. ASSETS & POOLS (AUD-06 & AUD-07)
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS assets (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     mint_address TEXT UNIQUE NOT NULL,
-    token_program TEXT NOT NULL DEFAULT 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA', -- SPL Token or Token-2022
+    token_program TEXT, -- NULL until verified: Tokenkeg... or Tokenz...
     name TEXT,
     symbol TEXT,
-    decimals SMALLINT NOT NULL DEFAULT 9,
-    total_supply NUMERIC(40,0),
+    decimals SMALLINT, -- NULL until confirmed by RPC getAccountInfo
+    total_supply_raw NUMERIC(40,0), -- Raw units as exact numeric integer
     metadata_uri TEXT,
-    is_token_2022 BOOLEAN NOT NULL DEFAULT FALSE,
+    is_token_2022 BOOLEAN, -- Tri-state: true, false, NULL (unverified)
     token_2022_extensions JSONB DEFAULT '[]'::jsonb,
+    is_verified BOOLEAN NOT NULL DEFAULT FALSE,
     first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -31,13 +32,14 @@ CREATE TABLE IF NOT EXISTS pools (
     asset_id UUID NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
     pool_address TEXT UNIQUE NOT NULL,
     dex_program TEXT NOT NULL, -- raydium_v4, raydium_clmm, orca_whirlpool, meteora_dlmm, pumpfun
+    dex_version TEXT NOT NULL DEFAULT 'v1',
     base_mint TEXT NOT NULL,
-    quote_mint TEXT NOT NULL, -- e.g. So11111111111111111111111111111111111111112 (WSOL)
+    quote_mint TEXT NOT NULL, -- WSOL: So11111111111111111111111111111111111111112
     created_slot BIGINT,
     created_at TIMESTAMPTZ,
     lp_status TEXT NOT NULL DEFAULT 'unknown', -- burned, locked, unlocked, unknown
-    lp_burn_pct NUMERIC(5,2) DEFAULT 0.00,
-    lp_locked_pct NUMERIC(5,2) DEFAULT 0.00,
+    lp_burn_pct NUMERIC(5,2),
+    lp_locked_pct NUMERIC(5,2),
     lp_lock_expiry TIMESTAMPTZ,
     updated_at TIMESTAMPTZ DEFAULT now()
 );
@@ -45,34 +47,36 @@ CREATE TABLE IF NOT EXISTS pools (
 CREATE TABLE IF NOT EXISTS market_snapshots (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     asset_id UUID NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
-    pool_id UUID REFERENCES pools(id) ON DELETE CASCADE,
-    captured_at TIMESTAMPTZ NOT NULL,
+    pool_id UUID NOT NULL REFERENCES pools(id) ON DELETE CASCADE,
+    request_id TEXT NOT NULL,
+    source TEXT NOT NULL, -- dexscreener, jupiter, rpc
+    source_record_id TEXT,
+    observed_at TIMESTAMPTZ NOT NULL, -- Publisher timestamp
+    ingested_at TIMESTAMPTZ NOT NULL DEFAULT now(), -- Local receipt timestamp
+    slot BIGINT,
     price_usd NUMERIC(30,12) NOT NULL,
     price_sol NUMERIC(30,12),
+    bid_price_sol NUMERIC(30,12),
+    ask_price_sol NUMERIC(30,12),
     market_cap_usd NUMERIC(30,4),
     fdv_usd NUMERIC(30,4),
     liquidity_usd NUMERIC(30,4),
     liquidity_sol NUMERIC(30,4),
     volume_5m NUMERIC(30,4) DEFAULT 0,
     volume_1h NUMERIC(30,4) DEFAULT 0,
-    volume_6h NUMERIC(30,4) DEFAULT 0,
     volume_24h NUMERIC(30,4) DEFAULT 0,
-    price_change_5m NUMERIC(8,4),
-    price_change_1h NUMERIC(8,4),
-    price_change_24h NUMERIC(8,4),
-    buys_5m INTEGER DEFAULT 0,
-    sells_5m INTEGER DEFAULT 0,
-    buys_1h INTEGER DEFAULT 0,
-    sells_1h INTEGER DEFAULT 0,
-    source TEXT NOT NULL DEFAULT 'dexscreener',
-    CONSTRAINT uq_pool_captured_at UNIQUE(pool_id, captured_at)
+    buys_1h INTEGER,
+    sells_1h INTEGER,
+    data_quality TEXT NOT NULL DEFAULT 'COMPLETE', -- COMPLETE, PARTIAL, DEGRADED
+    is_stale BOOLEAN NOT NULL DEFAULT FALSE,
+    CONSTRAINT uq_snapshot_pool_time UNIQUE(pool_id, observed_at)
 );
 
 CREATE TABLE IF NOT EXISTS ohlcv_candles (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     asset_id UUID NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
     pool_id UUID NOT NULL REFERENCES pools(id) ON DELETE CASCADE,
-    resolution TEXT NOT NULL, -- 1m, 5m, 15m, 1h, 4h, 1d
+    resolution TEXT NOT NULL CHECK (resolution IN ('1m', '5m', '15m', '1h', '4h', '1d')),
     timestamp TIMESTAMPTZ NOT NULL,
     open_price NUMERIC(30,12) NOT NULL,
     high_price NUMERIC(30,12) NOT NULL,
@@ -80,26 +84,38 @@ CREATE TABLE IF NOT EXISTS ohlcv_candles (
     close_price NUMERIC(30,12) NOT NULL,
     volume NUMERIC(30,4) NOT NULL,
     trades_count INTEGER DEFAULT 0,
+    source TEXT NOT NULL DEFAULT 'aggregated',
+    CONSTRAINT chk_candle_bounds CHECK (
+        high_price >= open_price AND
+        high_price >= close_price AND
+        low_price <= open_price AND
+        low_price <= close_price AND
+        low_price >= 0
+    ),
     CONSTRAINT uq_candle_window UNIQUE(pool_id, resolution, timestamp)
 );
 
 -- ----------------------------------------------------------------------------
--- 2. SECURITY SCANS & FORENSIC ANALYSIS
+-- 2. SECURITY SCANS & EVIDENCE FORENSICS (AUD-08 & AUD-10)
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS security_scans (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     asset_id UUID NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
-    provider TEXT NOT NULL, -- goplus, rugcheck, native_rpc
-    risk_score NUMERIC(5,2) NOT NULL, -- 0 (Safe) to 100 (Deadly Rug)
-    risk_level TEXT NOT NULL, -- low, medium, high, critical
-    confidence TEXT NOT NULL, -- high, partial, insufficient
+    provider TEXT NOT NULL,
+    provider_version TEXT NOT NULL DEFAULT 'v1',
+    risk_score NUMERIC(5,2),
+    risk_level TEXT NOT NULL CHECK (risk_level IN ('LOW', 'MODERATE', 'HIGH', 'CRITICAL', 'UNKNOWN')),
+    confidence TEXT NOT NULL CHECK (confidence IN ('HIGH', 'PARTIAL', 'INSUFFICIENT', 'STALE')),
     mint_authority TEXT,
     freeze_authority TEXT,
-    lp_burned BOOLEAN DEFAULT FALSE,
-    lp_locked BOOLEAN DEFAULT FALSE,
-    is_honeypot BOOLEAN DEFAULT FALSE,
-    transfer_fee_bps INTEGER DEFAULT 0,
+    is_mint_revoked BOOLEAN,
+    is_freeze_revoked BOOLEAN,
+    lp_burned BOOLEAN,
+    lp_locked BOOLEAN,
+    is_honeypot BOOLEAN,
+    transfer_fee_bps INTEGER,
     top10_holder_pct NUMERIC(5,2),
+    holder_coverage_pct NUMERIC(5,2),
     scanned_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     expires_at TIMESTAMPTZ NOT NULL,
     raw_report JSONB NOT NULL
@@ -109,7 +125,7 @@ CREATE TABLE IF NOT EXISTS security_findings (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     scan_id UUID NOT NULL REFERENCES security_scans(id) ON DELETE CASCADE,
     finding_code TEXT NOT NULL,
-    severity TEXT NOT NULL, -- INFO, WARNING, CRITICAL_FAIL
+    severity TEXT NOT NULL CHECK (severity IN ('INFO', 'WARNING', 'CRITICAL_FAIL')),
     description TEXT NOT NULL,
     evidence JSONB
 );
@@ -119,37 +135,39 @@ CREATE TABLE IF NOT EXISTS holder_snapshots (
     asset_id UUID NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
     slot BIGINT NOT NULL,
     captured_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    total_holders INTEGER NOT NULL,
-    top10_share_pct NUMERIC(5,2) NOT NULL,
-    top20_share_pct NUMERIC(5,2) NOT NULL,
-    deployer_balance_pct NUMERIC(5,2) NOT NULL,
+    total_holders_reported INTEGER,
+    accounts_inspected INTEGER NOT NULL,
+    supply_coverage_pct NUMERIC(5,2) NOT NULL,
+    top10_share_pct NUMERIC(5,2),
+    top20_share_pct NUMERIC(5,2),
+    deployer_balance_pct NUMERIC(5,2),
     holders JSONB NOT NULL
 );
 
--- ----------------------------------------------------------------------------
--- 3. WALLET INTELLIGENCE & CLUSTER GRAPH
--- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS wallets (
     address TEXT PRIMARY KEY,
     first_seen_slot BIGINT,
     first_seen_at TIMESTAMPTZ,
     last_seen_at TIMESTAMPTZ,
-    category TEXT DEFAULT 'unknown', -- smart_money, sniper, bundler, whale, deployer, insider, ordinary
-    sol_balance NUMERIC(30,9) DEFAULT 0,
+    category TEXT DEFAULT 'UNKNOWN',
+    sol_balance_lamports BIGINT DEFAULT 0,
     realized_pnl_usd NUMERIC(30,4) DEFAULT 0,
     win_rate NUMERIC(5,2),
     trades_count INTEGER DEFAULT 0,
     funding_source_address TEXT,
+    label_version TEXT,
+    label_expires_at TIMESTAMPTZ,
     metadata JSONB DEFAULT '{}'::jsonb,
     updated_at TIMESTAMPTZ DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS wallet_clusters (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    cluster_type TEXT NOT NULL, -- same_funder, same_slot_bundler, transfer_ring, insider_pool
+    cluster_type TEXT NOT NULL,
+    detector_version TEXT NOT NULL,
+    observation_window_slots BIGINT,
     confidence NUMERIC(5,2) NOT NULL,
     detected_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    notes TEXT,
     evidence JSONB NOT NULL
 );
 
@@ -166,176 +184,161 @@ CREATE TABLE IF NOT EXISTS first_buyers_forensics (
     asset_id UUID NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
     pool_id UUID NOT NULL REFERENCES pools(id) ON DELETE CASCADE,
     wallet_address TEXT NOT NULL REFERENCES wallets(address),
-    buy_rank SMALLINT NOT NULL,
+    buy_rank SMALLINT NOT NULL CHECK (buy_rank >= 1 AND buy_rank <= 25),
+    tx_signature TEXT NOT NULL,
     slot BIGINT NOT NULL,
     block_time TIMESTAMPTZ NOT NULL,
-    sol_spent NUMERIC(30,9) NOT NULL,
-    tokens_bought NUMERIC(40,0) NOT NULL,
-    current_status TEXT NOT NULL,
+    sol_spent_lamports BIGINT NOT NULL,
+    tokens_bought_raw NUMERIC(40,0) NOT NULL,
+    current_status TEXT NOT NULL CHECK (current_status IN ('HOLDING', 'DUMPED_100', 'DUMPED_PARTIAL', 'TRANSFERRED')),
     holding_pct NUMERIC(5,2) NOT NULL,
-    linked_to_deployer BOOLEAN DEFAULT FALSE,
     funder_address TEXT,
-    evidence JSONB
+    is_funder_shared BOOLEAN DEFAULT FALSE,
+    is_same_slot_as_pool BOOLEAN DEFAULT FALSE,
+    detector_version TEXT NOT NULL,
+    evidence JSONB,
+    CONSTRAINT uq_asset_pool_rank UNIQUE (asset_id, pool_id, buy_rank)
 );
 
 -- ----------------------------------------------------------------------------
--- 4. NEWS, NARRATIVE & SOCIAL INTELLIGENCE
--- ----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS news_sources (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name TEXT NOT NULL,
-    source_type TEXT NOT NULL, -- rss, official_blog, regulatory, telegram_channel, x_curated
-    feed_url TEXT UNIQUE NOT NULL,
-    reliability_score NUMERIC(5,2) DEFAULT 80.0,
-    enabled BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMPTZ DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS news_items (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    source_id UUID REFERENCES news_sources(id) ON DELETE SET NULL,
-    title TEXT NOT NULL,
-    url TEXT UNIQUE NOT NULL,
-    published_at TIMESTAMPTZ NOT NULL,
-    author TEXT,
-    content_snippet TEXT,
-    category TEXT NOT NULL,
-    sentiment_score NUMERIC(5,2) DEFAULT 0.0,
-    verification_status TEXT NOT NULL DEFAULT 'unverified',
-    affected_tokens JSONB DEFAULT '[]'::jsonb,
-    affected_sectors JSONB DEFAULT '[]'::jsonb,
-    created_at TIMESTAMPTZ DEFAULT now()
-);
-
--- ----------------------------------------------------------------------------
--- 5. RISK ENGINE, TRADE INTENTS & MANUAL APPROVAL
+-- 3. RISK POLICIES & ONE-TIME APPROVAL GATEWAY (AUD-03 & AUD-05)
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS risk_policies (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    environment TEXT NOT NULL CHECK (environment IN ('PAPER', 'LIVE')),
+    version INTEGER NOT NULL DEFAULT 1,
     name TEXT NOT NULL,
     is_active BOOLEAN NOT NULL DEFAULT FALSE,
-    environment TEXT NOT NULL DEFAULT 'paper',
-    max_trade_sol NUMERIC(10,4) NOT NULL DEFAULT 0.50,
-    max_daily_loss_sol NUMERIC(10,4) NOT NULL DEFAULT 2.00,
-    max_open_positions INTEGER NOT NULL DEFAULT 3,
-    max_slippage_bps INTEGER NOT NULL DEFAULT 250,
-    max_price_impact_bps INTEGER NOT NULL DEFAULT 300,
-    max_priority_fee_lamports BIGINT NOT NULL DEFAULT 10000000,
-    min_liquidity_usd NUMERIC(15,2) NOT NULL DEFAULT 15000.00,
-    max_risk_score NUMERIC(5,2) NOT NULL DEFAULT 35.0,
+    max_trade_lamports BIGINT NOT NULL,
+    max_daily_loss_lamports BIGINT NOT NULL,
+    max_open_positions INTEGER NOT NULL,
+    max_slippage_bps INTEGER NOT NULL CHECK (max_slippage_bps <= 500),
+    max_price_impact_bps INTEGER NOT NULL CHECK (max_price_impact_bps <= 500),
+    max_priority_fee_lamports BIGINT NOT NULL,
+    min_liquidity_usd NUMERIC(15,2) NOT NULL,
+    max_risk_score NUMERIC(5,2) NOT NULL,
     require_burned_lp BOOLEAN NOT NULL DEFAULT TRUE,
     require_mint_freeze_revoked BOOLEAN NOT NULL DEFAULT TRUE,
-    allowed_wallets JSONB NOT NULL DEFAULT '[]'::jsonb,
+    allowed_execution_wallets JSONB NOT NULL DEFAULT '[]'::jsonb,
     created_at TIMESTAMPTZ DEFAULT now()
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_active_policy_per_env 
+ON risk_policies(environment) WHERE is_active = TRUE;
 
 CREATE TABLE IF NOT EXISTS trade_intents (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     asset_id UUID NOT NULL REFERENCES assets(id),
     pool_id UUID NOT NULL REFERENCES pools(id),
-    environment TEXT NOT NULL DEFAULT 'paper',
+    policy_id UUID NOT NULL REFERENCES risk_policies(id),
+    environment TEXT NOT NULL CHECK (environment IN ('LIVE')),
     wallet_address TEXT NOT NULL,
-    side TEXT NOT NULL,
+    side TEXT NOT NULL CHECK (side IN ('BUY', 'SELL')),
     input_mint TEXT NOT NULL,
     output_mint TEXT NOT NULL,
     input_amount_raw NUMERIC(40,0) NOT NULL,
-    expected_output_raw NUMERIC(40,0) NOT NULL,
-    estimated_slippage_bps INTEGER NOT NULL,
+    minimum_output_raw NUMERIC(40,0) NOT NULL,
+    max_slippage_bps INTEGER NOT NULL,
     estimated_price_impact_bps INTEGER NOT NULL,
-    policy_id UUID REFERENCES risk_policies(id),
-    status TEXT NOT NULL DEFAULT 'PENDING_APPROVAL',
+    status TEXT NOT NULL CHECK (status IN ('PENDING_APPROVAL', 'APPROVED', 'CONSUMED', 'REJECTED', 'EXPIRED')),
     expires_at TIMESTAMPTZ NOT NULL,
+    canonical_intent_digest TEXT NOT NULL,
     risk_evaluation_snapshot JSONB NOT NULL,
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS trade_approvals (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    intent_id UUID NOT NULL REFERENCES trade_intents(id) ON DELETE CASCADE,
+    intent_id UUID NOT NULL UNIQUE REFERENCES trade_intents(id) ON DELETE CASCADE,
     approved_by TEXT NOT NULL DEFAULT 'MANUAL_USER',
     transaction_message_hash TEXT NOT NULL,
+    is_consumed BOOLEAN NOT NULL DEFAULT FALSE,
+    consumed_at TIMESTAMPTZ,
+    revoked_at TIMESTAMPTZ,
+    revocation_reason TEXT,
     approved_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    expires_at TIMESTAMPTZ NOT NULL,
-    revoked_at TIMESTAMPTZ
+    expires_at TIMESTAMPTZ NOT NULL
 );
 
 -- ----------------------------------------------------------------------------
--- 6. DOUBLE-ENTRY LEDGER & AUDITABLE LIVE TRADING
+-- 4. LIVE EXECUTION & IMMUTABLE DOUBLE-ENTRY LEDGER (AUD-01 & AUD-02)
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS chain_transactions (
     signature TEXT PRIMARY KEY,
     wallet_address TEXT NOT NULL,
     slot BIGINT NOT NULL,
     block_time TIMESTAMPTZ NOT NULL,
-    confirmation_status TEXT NOT NULL,
-    err_message TEXT,
+    confirmation_status TEXT NOT NULL CHECK (confirmation_status IN ('confirmed', 'finalized', 'failed')),
     fee_lamports BIGINT NOT NULL,
+    err_message TEXT,
     raw_meta JSONB
 );
 
-CREATE TABLE IF NOT EXISTS orders (
+CREATE TABLE IF NOT EXISTS live_orders (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    intent_id UUID NOT NULL REFERENCES trade_intents(id),
-    environment TEXT NOT NULL DEFAULT 'paper',
+    intent_id UUID NOT NULL UNIQUE REFERENCES trade_intents(id),
+    client_order_id TEXT NOT NULL UNIQUE,
     wallet_address TEXT NOT NULL,
-    side TEXT NOT NULL,
-    status TEXT NOT NULL,
+    side TEXT NOT NULL CHECK (side IN ('BUY', 'SELL')),
+    input_mint TEXT NOT NULL,
+    output_mint TEXT NOT NULL,
+    input_amount_raw NUMERIC(40,0) NOT NULL,
+    minimum_output_raw NUMERIC(40,0) NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('SUBMITTED', 'CONFIRMED', 'FAILED', 'EXPIRED')),
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS fills (
+CREATE TABLE IF NOT EXISTS live_fills (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
-    signature TEXT REFERENCES chain_transactions(signature),
+    order_id UUID NOT NULL REFERENCES live_orders(id) ON DELETE CASCADE,
+    signature TEXT NOT NULL REFERENCES chain_transactions(signature),
     input_mint TEXT NOT NULL,
     output_mint TEXT NOT NULL,
     input_amount_raw NUMERIC(40,0) NOT NULL,
     output_amount_raw NUMERIC(40,0) NOT NULL,
-    fee_lamports BIGINT NOT NULL DEFAULT 0,
-    effective_price_usd NUMERIC(30,12) NOT NULL,
-    filled_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    fee_lamports BIGINT NOT NULL,
+    price_sol NUMERIC(30,12) NOT NULL,
+    price_usd NUMERIC(30,12) NOT NULL,
+    filled_at TIMESTAMPTZ NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS ledger_postings (
-    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    transaction_signature TEXT,
-    order_id UUID REFERENCES orders(id),
-    wallet_address TEXT NOT NULL,
-    account_type TEXT NOT NULL, -- ASSET_SOL, ASSET_TOKEN, EXPENSE_FEE, REALIZED_PNL
-    mint_address TEXT NOT NULL,
-    debit_amount_raw NUMERIC(40,0) NOT NULL DEFAULT 0,
-    credit_amount_raw NUMERIC(40,0) NOT NULL DEFAULT 0,
-    usd_valuation NUMERIC(30,8) NOT NULL,
+CREATE TABLE IF NOT EXISTS live_ledger_journals (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    transaction_signature TEXT NOT NULL UNIQUE REFERENCES chain_transactions(signature),
+    order_id UUID REFERENCES live_orders(id),
+    idempotency_key TEXT NOT NULL UNIQUE,
+    journal_type TEXT NOT NULL CHECK (journal_type IN ('TRADE_BUY', 'TRADE_SELL', 'FEE_EXPENSE', 'TRANSFER')),
+    description TEXT NOT NULL,
     posted_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS trading_journal (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    order_id UUID NOT NULL REFERENCES orders(id),
-    asset_id UUID NOT NULL REFERENCES assets(id),
-    strategy_name TEXT NOT NULL,
-    entry_rationale TEXT NOT NULL,
-    exit_rationale TEXT,
-    tags TEXT[] DEFAULT '{}',
-    opportunity_score NUMERIC(5,2),
-    risk_score NUMERIC(5,2),
-    net_pnl_usd NUMERIC(30,4),
-    net_pnl_sol NUMERIC(30,9),
-    created_at TIMESTAMPTZ DEFAULT now()
+CREATE TABLE IF NOT EXISTS live_ledger_lines (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    journal_id UUID NOT NULL REFERENCES live_ledger_journals(id) ON DELETE CASCADE,
+    account_code TEXT NOT NULL CHECK (account_code IN (
+        'WALLET_SOL', 'WALLET_TOKEN', 'EXPENSE_NETWORK_FEE', 'EXPENSE_DEX_FEE', 'REALIZED_PNL'
+    )),
+    wallet_address TEXT NOT NULL,
+    mint_address TEXT NOT NULL,
+    debit_amount_raw NUMERIC(40,0) NOT NULL DEFAULT 0,
+    credit_amount_raw NUMERIC(40,0) NOT NULL DEFAULT 0,
+    usd_rate NUMERIC(30,12) NOT NULL,
+    CONSTRAINT chk_debit_credit_positive CHECK (debit_amount_raw >= 0 AND credit_amount_raw >= 0),
+    CONSTRAINT chk_at_least_one_side CHECK (debit_amount_raw > 0 OR credit_amount_raw > 0)
 );
 
 -- ----------------------------------------------------------------------------
--- 7. ISOLATED PAPER TRADING & STRATEGY VALIDATION
+-- 5. DECOUPLED PAPER TRADING DESK (AUD-01 & AUD-04)
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS paper_accounts (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     account_name TEXT NOT NULL UNIQUE DEFAULT 'Default Paper Desk',
-    initial_virtual_sol NUMERIC(30,9) NOT NULL DEFAULT 100.000000000,
-    current_virtual_sol NUMERIC(30,9) NOT NULL DEFAULT 100.000000000,
-    allocated_virtual_sol NUMERIC(30,9) NOT NULL DEFAULT 0.000000000,
-    realized_pnl_sol NUMERIC(30,9) NOT NULL DEFAULT 0.000000000,
-    unrealized_pnl_sol NUMERIC(30,9) NOT NULL DEFAULT 0.000000000,
+    initial_virtual_lamports BIGINT NOT NULL DEFAULT 100000000000,
+    current_virtual_lamports BIGINT NOT NULL DEFAULT 100000000000,
+    allocated_virtual_lamports BIGINT NOT NULL DEFAULT 0,
+    realized_pnl_lamports BIGINT NOT NULL DEFAULT 0,
+    unrealized_pnl_lamports BIGINT NOT NULL DEFAULT 0,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now()
@@ -346,46 +349,74 @@ CREATE TABLE IF NOT EXISTS paper_positions (
     account_id UUID NOT NULL REFERENCES paper_accounts(id) ON DELETE CASCADE,
     asset_id UUID NOT NULL REFERENCES assets(id),
     pool_id UUID NOT NULL REFERENCES pools(id),
-    status TEXT NOT NULL DEFAULT 'OPEN',
+    status TEXT NOT NULL CHECK (status IN ('OPEN', 'CLOSED')),
     token_amount_raw NUMERIC(40,0) NOT NULL,
-    cost_basis_sol NUMERIC(30,9) NOT NULL,
-    cost_basis_usd NUMERIC(30,4) NOT NULL,
+    cost_basis_lamports BIGINT NOT NULL,
     average_entry_price_sol NUMERIC(30,12) NOT NULL,
     current_market_price_sol NUMERIC(30,12) NOT NULL,
-    unrealized_pnl_sol NUMERIC(30,9) DEFAULT 0,
+    unrealized_pnl_lamports BIGINT DEFAULT 0,
     take_profit_price_sol NUMERIC(30,12),
     stop_loss_price_sol NUMERIC(30,12),
     opened_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    closed_at TIMESTAMPTZ,
-    CONSTRAINT uq_paper_open_asset UNIQUE (account_id, asset_id, status)
+    closed_at TIMESTAMPTZ
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_paper_positions_unique_open 
+ON paper_positions(account_id, asset_id) WHERE status = 'OPEN';
 
 CREATE TABLE IF NOT EXISTS paper_orders (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     account_id UUID NOT NULL REFERENCES paper_accounts(id) ON DELETE CASCADE,
+    client_order_id TEXT NOT NULL UNIQUE,
     asset_id UUID NOT NULL REFERENCES assets(id),
     pool_id UUID NOT NULL REFERENCES pools(id),
-    side TEXT NOT NULL,
-    order_type TEXT NOT NULL DEFAULT 'MARKET',
-    input_amount_sol NUMERIC(30,9),
-    output_tokens_requested NUMERIC(40,0),
-    simulated_slippage_bps INTEGER NOT NULL DEFAULT 100,
-    simulated_price_impact_bps INTEGER NOT NULL DEFAULT 150,
-    status TEXT NOT NULL DEFAULT 'SUBMITTED',
+    side TEXT NOT NULL CHECK (side IN ('BUY', 'SELL')),
+    order_type TEXT NOT NULL DEFAULT 'MARKET' CHECK (order_type IN ('MARKET', 'LIMIT', 'STOP_LOSS', 'TAKE_PROFIT')),
+    input_mint TEXT NOT NULL,
+    output_mint TEXT NOT NULL,
+    input_amount_raw NUMERIC(40,0) NOT NULL,
+    minimum_output_raw NUMERIC(40,0) NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('SUBMITTED', 'FILLED', 'PARTIALLY_FILLED', 'REJECTED', 'CANCELLED', 'EXPIRED')),
     rejection_reason TEXT,
-    snapshot_price_sol NUMERIC(30,12) NOT NULL,
-    simulated_fill_price_sol NUMERIC(30,12),
-    simulated_fee_sol NUMERIC(30,9) DEFAULT 0.0005,
-    submitted_at TIMESTAMPTZ DEFAULT now(),
-    filled_at TIMESTAMPTZ
+    snapshot_quote_id BIGINT REFERENCES market_snapshots(id),
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS paper_execution_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    order_id UUID NOT NULL REFERENCES paper_orders(id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL CHECK (event_type IN ('FILL', 'PARTIAL_FILL', 'PRICE_IMPACT_ADJUSTMENT', 'FEE_DEDUCTION')),
+    input_amount_raw NUMERIC(40,0) NOT NULL,
+    output_amount_raw NUMERIC(40,0) NOT NULL,
+    effective_price_sol NUMERIC(30,12) NOT NULL,
+    effective_price_usd NUMERIC(30,12) NOT NULL,
+    bid_ask_spread_bps INTEGER NOT NULL DEFAULT 10,
+    liquidity_impact_bps INTEGER NOT NULL DEFAULT 25,
+    simulated_slippage_bps INTEGER NOT NULL,
+    simulated_network_fee_lamports BIGINT NOT NULL DEFAULT 5000,
+    simulated_priority_fee_lamports BIGINT NOT NULL DEFAULT 50000,
+    occurred_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS paper_account_events (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    account_id UUID NOT NULL REFERENCES paper_accounts(id) ON DELETE CASCADE,
+    order_id UUID REFERENCES paper_orders(id),
+    event_category TEXT NOT NULL CHECK (event_category IN ('DEPOSIT', 'ALLOCATION', 'RELEASE', 'FILL_DEBIT', 'FILL_CREDIT', 'FEE')),
+    delta_lamports BIGINT NOT NULL,
+    balance_after_lamports BIGINT NOT NULL,
+    note TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS paper_performance_snapshots (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     account_id UUID NOT NULL REFERENCES paper_accounts(id) ON DELETE CASCADE,
     snapshot_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    total_equity_sol NUMERIC(30,9) NOT NULL,
-    open_positions_count INTEGER NOT NULL,
+    simulation_model_version TEXT NOT NULL DEFAULT 'v1_linear_impact',
+    total_equity_lamports BIGINT NOT NULL,
+    closed_trades_count INTEGER NOT NULL DEFAULT 0,
     win_count INTEGER NOT NULL DEFAULT 0,
     loss_count INTEGER NOT NULL DEFAULT 0,
     win_rate NUMERIC(5,2) DEFAULT 0.00,
@@ -394,16 +425,34 @@ CREATE TABLE IF NOT EXISTS paper_performance_snapshots (
 );
 
 -- ----------------------------------------------------------------------------
--- 8. INDEXES
+-- 6. WORKFLOW LEDGER & OUTBOX (AUD-09)
 -- ----------------------------------------------------------------------------
-CREATE INDEX IF NOT EXISTS idx_assets_mint ON assets(mint_address);
-CREATE INDEX IF NOT EXISTS idx_pools_asset ON pools(asset_id);
-CREATE INDEX IF NOT EXISTS idx_pools_address ON pools(pool_address);
-CREATE INDEX IF NOT EXISTS idx_snapshots_pool_time ON market_snapshots(pool_id, captured_at DESC);
-CREATE INDEX IF NOT EXISTS idx_candles_lookup ON ohlcv_candles(pool_id, resolution, timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_scans_asset_time ON security_scans(asset_id, scanned_at DESC);
-CREATE INDEX IF NOT EXISTS idx_wallets_category ON wallets(category);
-CREATE INDEX IF NOT EXISTS idx_news_published ON news_items(published_at DESC);
-CREATE INDEX IF NOT EXISTS idx_trade_intents_pending ON trade_intents(status, expires_at);
-CREATE INDEX IF NOT EXISTS idx_paper_positions_account ON paper_positions(account_id, status);
-CREATE INDEX IF NOT EXISTS idx_paper_orders_account ON paper_orders(account_id, submitted_at DESC);
+CREATE TABLE IF NOT EXISTS workflow_runs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workflow_id TEXT NOT NULL,
+    execution_id TEXT NOT NULL UNIQUE,
+    trigger_type TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('RUNNING', 'SUCCESS', 'FAILED', 'RETRYING')),
+    started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    finished_at TIMESTAMPTZ,
+    error_details JSONB
+);
+
+CREATE TABLE IF NOT EXISTS outbox_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    event_topic TEXT NOT NULL,
+    payload JSONB NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'PROCESSED', 'DEAD_LETTER')),
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    next_retry_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- ----------------------------------------------------------------------------
+-- 7. INDEXES
+-- ----------------------------------------------------------------------------
+CREATE INDEX IF NOT EXISTS idx_snapshots_lookup ON market_snapshots(pool_id, observed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_paper_orders_account_time ON paper_orders(account_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_paper_account_events_acct ON paper_account_events(account_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_live_orders_wallet ON live_orders(wallet_address, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ledger_lines_journal ON live_ledger_lines(journal_id);

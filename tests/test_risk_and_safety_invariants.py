@@ -11,7 +11,6 @@ from app.core.config import settings
 client = TestClient(app)
 
 def test_cold_vault_execution_rejected():
-    # Set a mock cold vault in settings
     cold_vault = "ColdVaultMock111111111111111111111111111111"
     settings.COLD_VAULT_ADDRESSES = [cold_vault]
 
@@ -22,7 +21,7 @@ def test_cold_vault_execution_rejected():
         "side": "BUY",
         "input_mint": "So11111111111111111111111111111111111111112",
         "output_mint": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
-        "input_amount_sol": 0.25,
+        "input_amount_raw": 250000000, # 0.25 SOL
         "max_slippage_bps": 150
     }
 
@@ -39,7 +38,7 @@ def test_excessive_trade_amount_rejected():
         "side": "BUY",
         "input_mint": "So11111111111111111111111111111111111111112",
         "output_mint": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
-        "input_amount_sol": 50.0, # Violates 0.5 SOL limit
+        "input_amount_raw": 50000000000, # 50 SOL (violates 0.5 SOL limit)
         "max_slippage_bps": 150
     }
 
@@ -58,7 +57,7 @@ def test_excessive_slippage_tolerance_rejected():
         "side": "BUY",
         "input_mint": "So11111111111111111111111111111111111111112",
         "output_mint": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
-        "input_amount_sol": 0.25,
+        "input_amount_raw": 250000000,
         "max_slippage_bps": 500 # Violates 250 bps limit
     }
 

@@ -4,21 +4,42 @@ from enum import Enum
 from typing import Dict, List, Optional, Any
 from pydantic import BaseModel, Field
 
-class TokenProgramEnum(str, Enum):
-    SPL_TOKEN = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
-    TOKEN_2022 = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+# Primitives & Tri-State Enums (AUD-10)
+class TriState(str, Enum):
+    TRUE = "true"
+    FALSE = "false"
+    UNKNOWN = "unknown"
+
+class Environment(str, Enum):
+    RESEARCH = "RESEARCH"
+    PAPER = "PAPER"
+    LIVE = "LIVE"
+
+class DataFreshness(str, Enum):
+    REALTIME = "REALTIME"      # < 30s
+    ACCEPTABLE = "ACCEPTABLE"  # 30s - 120s
+    STALE = "STALE"            # > 120s
+    DEGRADED = "DEGRADED"
+
+class EvidenceStatus(str, Enum):
+    VERIFIED = "VERIFIED"
+    PROBABILISTIC = "PROBABILISTIC"
+    INSUFFICIENT = "INSUFFICIENT"
+    DISPUTED = "DISPUTED"
 
 class RiskBandEnum(str, Enum):
-    LOW = "low"
-    MODERATE = "moderate"
-    HIGH = "high"
-    CRITICAL = "critical"
+    LOW = "LOW"
+    MODERATE = "MODERATE"
+    HIGH = "HIGH"
+    CRITICAL = "CRITICAL"
+    UNKNOWN = "UNKNOWN"
 
 # Discovery Schemas
 class TokenDiscoveryResponse(BaseModel):
     mint_address: str
     symbol: Optional[str] = None
     name: Optional[str] = None
+    decimals: Optional[int] = None
     price_usd: Decimal
     liquidity_usd: Decimal
     volume_5m: Decimal
@@ -26,19 +47,20 @@ class TokenDiscoveryResponse(BaseModel):
     volume_24h: Decimal
     price_change_5m: Optional[Decimal] = None
     price_change_1h: Optional[Decimal] = None
-    buy_sell_ratio_1h: Decimal
-    risk_score: Decimal
+    buy_sell_ratio_1h: Optional[Decimal] = None
+    risk_score: Optional[Decimal] = None
     risk_band: RiskBandEnum
-    composite_opportunity_score: Decimal
-    lp_burned: bool
-    mint_revoked: bool
-    is_token_2022: bool
+    composite_opportunity_score: Optional[Decimal] = None
+    lp_burned: TriState
+    mint_revoked: TriState
+    is_token_2022: TriState
+    data_freshness: DataFreshness = DataFreshness.REALTIME
 
 class CandidateRegistrationRequest(BaseModel):
     mint_address: str
     symbol: Optional[str] = None
     name: Optional[str] = None
-    token_program: str = TokenProgramEnum.SPL_TOKEN.value
+    token_program: Optional[str] = None
     metadata_uri: Optional[str] = None
     pool_address: Optional[str] = None
     dex_program: Optional[str] = None
@@ -53,30 +75,34 @@ class FindingItem(BaseModel):
 
 class TokenSecurityReport(BaseModel):
     mint_address: str
-    token_program: str
-    is_token_2022: bool
-    mint_authority: Optional[str] = None
-    freeze_authority: Optional[str] = None
-    is_honeypot: bool
-    transfer_fee_bps: int
+    token_program: Optional[str] = None
+    is_token_2022: TriState
+    is_mint_revoked: TriState
+    is_freeze_revoked: TriState
+    is_honeypot: TriState
+    transfer_fee_bps: Optional[int] = None
     lp_status: str
-    lp_burned_pct: Decimal
-    top10_concentration_pct: Decimal
-    risk_score: Decimal
-    confidence: str
+    lp_burned: TriState
+    lp_burned_pct: Optional[Decimal] = None
+    top10_concentration_pct: Optional[Decimal] = None
+    holder_coverage_pct: Optional[Decimal] = None
+    risk_score: Optional[Decimal] = None
+    risk_level: str
+    confidence: EvidenceStatus
     findings: List[FindingItem] = []
     scanned_at: datetime
+    is_stale: bool = False
 
 class FirstBuyerItem(BaseModel):
     buy_rank: int
     wallet_address: str
-    sol_spent: Decimal
-    tokens_bought: Decimal
+    sol_spent_lamports: int
+    tokens_bought_raw: Decimal
     holding_pct: Decimal
     current_status: str
     funder_address: Optional[str] = None
-    linked_to_deployer: bool = False
-    same_slot_cluster: bool = False
+    is_funder_shared: bool = False
+    is_same_slot_as_pool: bool = False
 
 class FirstBuyersForensicsResponse(BaseModel):
     mint_address: str
@@ -84,6 +110,8 @@ class FirstBuyersForensicsResponse(BaseModel):
     deployer_address: Optional[str] = None
     total_first_buyers_held_pct: Decimal
     bundler_cluster_detected: bool
+    evidence_status: EvidenceStatus
+    detector_version: str = "v1"
     buyers: List[FirstBuyerItem]
 
 # News & Narrative Schemas
@@ -102,7 +130,7 @@ class NewsFeedItem(BaseModel):
 # Opportunity Scoring
 class OpportunityScoreBreakdown(BaseModel):
     mint_address: str
-    composite_score: Decimal
+    composite_score: Optional[Decimal] = None
     market_momentum_score: Decimal
     security_safety_score: Decimal
     wallet_intelligence_score: Decimal
@@ -110,51 +138,64 @@ class OpportunityScoreBreakdown(BaseModel):
     hard_reject_triggered: bool
     rejection_reasons: List[str] = []
     confidence_coverage_pct: Decimal
+    evidence_status: EvidenceStatus
 
-# Paper Trading Schemas
+# Paper Trading Schemas (AUD-01 & AUD-04)
 class PaperOrderRequest(BaseModel):
+    account_id: str
+    client_order_id: str = Field(..., description="Unique idempotency key")
     asset_id: str
     pool_id: str
     side: str = Field(..., pattern="^(BUY|SELL)$")
-    amount_sol: Decimal = Field(..., gt=0, le=10)
+    input_mint: str = Field(..., description="Mint of token being sold")
+    output_mint: str = Field(..., description="Mint of token being bought")
+    input_amount_raw: Decimal = Field(..., gt=0, description="Exact raw units spent")
     max_slippage_bps: int = Field(default=150, ge=10, le=2000)
+
+class PaperExecutionEventDTO(BaseModel):
+    event_id: str
+    event_type: str
+    input_amount_raw: Decimal
+    output_amount_raw: Decimal
+    effective_price_sol: Decimal
+    liquidity_impact_bps: int
+    simulated_slippage_bps: int
+    simulated_total_fee_lamports: int
+    occurred_at: datetime
 
 class PaperOrderResponse(BaseModel):
     order_id: str
+    client_order_id: str
     status: str
     side: str
-    amount_sol: Decimal
-    fill_price_sol: Decimal
-    tokens_received: Decimal
-    simulated_slippage_bps: int
-    simulated_fee_sol: Decimal
-    filled_at: datetime
+    input_amount_raw: Decimal
+    output_amount_raw: Optional[Decimal] = None
+    effective_price_sol: Optional[Decimal] = None
+    execution_events: List[PaperExecutionEventDTO] = []
+    created_at: datetime
 
 class PaperPositionResponse(BaseModel):
     position_id: str
     mint_address: str
     symbol: Optional[str] = None
-    token_amount: Decimal
-    cost_basis_sol: Decimal
-    current_value_sol: Decimal
-    unrealized_pnl_sol: Decimal
-    unrealized_pnl_pct: Decimal
-    average_entry_price_sol: Decimal
+    token_amount_raw: Decimal
+    cost_basis_lamports: int
     current_market_price_sol: Decimal
+    unrealized_pnl_lamports: int
     opened_at: datetime
 
 class PaperAccountResponse(BaseModel):
     account_id: str
     account_name: str
-    virtual_sol_balance: Decimal
-    allocated_sol: Decimal
-    total_equity_sol: Decimal
-    realized_pnl_sol: Decimal
-    unrealized_pnl_sol: Decimal
+    current_virtual_lamports: int
+    allocated_virtual_lamports: int
+    total_equity_lamports: int
+    realized_pnl_lamports: int
+    unrealized_pnl_lamports: int
     win_rate: Decimal
     profit_factor: Decimal
 
-# Trade Approval Gateway Schemas
+# Trade Approval Gateway Schemas (AUD-03 & AUD-05)
 class TradeIntentRequest(BaseModel):
     asset_id: str
     pool_id: str
@@ -162,16 +203,17 @@ class TradeIntentRequest(BaseModel):
     side: str = Field(..., pattern="^(BUY|SELL)$")
     input_mint: str
     output_mint: str
-    input_amount_sol: Decimal
+    input_amount_raw: Decimal
     max_slippage_bps: int = Field(default=150, ge=10, le=500)
 
 class TradeIntentResponse(BaseModel):
     intent_id: str
     status: str
     wallet_address: str
-    input_amount_sol: Decimal
-    expected_output_tokens: Decimal
+    input_amount_raw: Decimal
+    minimum_output_raw: Decimal
     estimated_price_impact_bps: int
+    canonical_intent_digest: str
     transaction_message_hash: str
     expires_at: datetime
     policy_checks_passed: bool

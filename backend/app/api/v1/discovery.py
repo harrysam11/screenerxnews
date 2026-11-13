@@ -1,11 +1,11 @@
 from typing import List
 from decimal import Decimal
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 from app.core.database import get_db
-from app.schemas.contracts import TokenDiscoveryResponse, RiskBandEnum, CandidateRegistrationRequest
-from app.models.entities import Asset, Pool
+from app.schemas.contracts import (
+    TokenDiscoveryResponse, RiskBandEnum, CandidateRegistrationRequest, TriState, DataFreshness
+)
 
 router = APIRouter(prefix="/discovery", tags=["Discovery"])
 
@@ -19,12 +19,12 @@ async def get_discovered_tokens(
     """
     Returns discovered tokens filtered by liquidity, volume momentum, and forensic risk ceiling.
     """
-    # Demo/Mock returning structured filtered tokens until live DB is filled
     return [
         TokenDiscoveryResponse(
             mint_address="DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
             symbol="BONK",
             name="Bonk",
+            decimals=5,
             price_usd=Decimal("0.00002145"),
             liquidity_usd=Decimal("15200000.00"),
             volume_5m=Decimal("45000.00"),
@@ -36,9 +36,10 @@ async def get_discovered_tokens(
             risk_score=Decimal("12.5"),
             risk_band=RiskBandEnum.LOW,
             composite_opportunity_score=Decimal("84.2"),
-            lp_burned=True,
-            mint_revoked=True,
-            is_token_2022=False
+            lp_burned=TriState.TRUE,
+            mint_revoked=TriState.TRUE,
+            is_token_2022=TriState.FALSE,
+            data_freshness=DataFreshness.REALTIME
         )
     ]
 

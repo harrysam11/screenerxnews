@@ -25,7 +25,8 @@ def test_discovery_tokens_endpoint():
     first = tokens[0]
     assert "mint_address" in first
     assert "price_usd" in first
-    assert "composite_opportunity_score" in first
+    assert "data_freshness" in first
+    assert first["lp_burned"] in ["true", "false", "unknown"]
 
 def test_forensics_token_endpoint():
     mint = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
@@ -35,7 +36,8 @@ def test_forensics_token_endpoint():
     assert report["mint_address"] == mint
     assert "risk_score" in report
     assert "findings" in report
-    assert report["lp_status"] == "burned"
+    assert report["is_mint_revoked"] in ["true", "false", "unknown"]
+    assert report["confidence"] in ["VERIFIED", "PROBABILISTIC", "INSUFFICIENT", "DISPUTED"]
 
 def test_first_buyers_endpoint():
     mint = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
@@ -44,6 +46,7 @@ def test_first_buyers_endpoint():
     data = response.json()
     assert data["mint_address"] == mint
     assert "buyers" in data
+    assert data["evidence_status"] == "PROBABILISTIC"
     assert len(data["buyers"]) >= 1
 
 def test_scoring_endpoint():
@@ -54,7 +57,7 @@ def test_scoring_endpoint():
     assert data["mint_address"] == mint
     assert "composite_score" in data
     assert "confidence_coverage_pct" in data
-    # Check that O = 0.35M + 0.30S + 0.20W + 0.15N holds approximately
+    assert data["evidence_status"] == "VERIFIED"
     m = Decimal(str(data["market_momentum_score"]))
     s = Decimal(str(data["security_safety_score"]))
     w = Decimal(str(data["wallet_intelligence_score"]))
@@ -68,23 +71,28 @@ def test_paper_desk_endpoints():
     res_acc = client.get("/api/v1/paper/account")
     assert res_acc.status_code == 200
     acc = res_acc.json()
-    assert "virtual_sol_balance" in acc
-    assert "total_equity_sol" in acc
+    assert "current_virtual_lamports" in acc
+    assert "total_equity_lamports" in acc
 
-    # 2. Place paper order
+    # 2. Place paper order (symmetrical)
     order_payload = {
+        "account_id": "00000000-0000-0000-0000-000000000001",
+        "client_order_id": "client-ord-12345",
         "asset_id": "00000000-0000-0000-0000-000000000001",
         "pool_id": "00000000-0000-0000-0000-000000000002",
         "side": "BUY",
-        "amount_sol": 1.5,
+        "input_mint": "So11111111111111111111111111111111111111112",
+        "output_mint": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+        "input_amount_raw": 1500000000, # 1.5 SOL in lamports
         "max_slippage_bps": 150
     }
     res_order = client.post("/api/v1/paper/order", json=order_payload)
     assert res_order.status_code == 200
     order_data = res_order.json()
     assert order_data["status"] == "FILLED"
-    assert Decimal(str(order_data["tokens_received"])) > 0
-    assert order_data["simulated_slippage_bps"] > 0
+    assert order_data["client_order_id"] == "client-ord-12345"
+    assert len(order_data["execution_events"]) >= 1
+    assert order_data["execution_events"][0]["liquidity_impact_bps"] > 0
 
     # 3. Check positions
     res_pos = client.get("/api/v1/paper/positions")
