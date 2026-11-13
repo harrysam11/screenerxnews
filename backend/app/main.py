@@ -1,5 +1,8 @@
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from app.core.config import settings
 from app.api.v1 import api_v1_router
 
@@ -21,6 +24,18 @@ app.add_middleware(
 
 app.include_router(api_v1_router)
 
+STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+if os.path.exists(STATIC_DIR):
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+@app.get("/")
+@app.get("/dashboard")
+async def serve_dashboard():
+    index_path = os.path.join(STATIC_DIR, "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
+    return {"message": "Dashboard UI under construction"}
+
 @app.get("/health")
 async def health_check():
     return {
@@ -29,3 +44,4 @@ async def health_check():
         "environment": settings.APP_ENV,
         "live_trading_allowed": settings.ALLOW_LIVE_TRADING
     }
+

@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+  <meta name="description" content="Multi-Chain Memecoin Intelligence, Forensics & Paper Trading Operating System">
+  <meta name="theme-color" content="#090d16">
+  <title>Memecoin Intelligence & Forensics OS</title>
+  <link rel="stylesheet" href="/static/css/design_system.css">
+</head>
+<body>
+  <div class="app-shell">
+    <!-- Desktop & Laptop Persistent Sidebar (Collapsed on Tablet) -->
+    <aside class="sidebar" id="app-sidebar" aria-label="Main Navigation">
+      <div class="sidebar-header p-5 border-b border-subtle flex items-center justify-between">
+        <div class="brand flex items-center gap-3">
+          <span class="brand-logo text-xl" aria-hidden="true">⚡</span>
+          <span class="brand-title font-bold font-mono tracking-tight text-primary">MEMECOIN OS</span>
+        </div>
+      </div>
+      <nav class="sidebar-nav">
+        <a href="#overview" class="nav-link active" data-view="overview" aria-current="page">
+          <span class="nav-icon" aria-hidden="true">📊</span>
+          <span class="nav-label">Overview</span>
+        </a>
+        <a href="#screener" class="nav-link" data-view="screener">
+          <span class="nav-icon" aria-hidden="true">🔍</span>
+          <span class="nav-label">Multi-Chain Screener</span>
+        </a>
+        <a href="#forensics" class="nav-link" data-view="forensics">
+          <span class="nav-icon" aria-hidden="true">🛡️</span>
+          <span class="nav-label">Forensics & Security</span>
+        </a>
+        <a href="#paper" class="nav-link" data-view="paper">
+          <span class="nav-icon" aria-hidden="true">📈</span>
+          <span class="nav-label">Paper Desks (12)</span>
+        </a>
+        <a href="#alerts" class="nav-link" data-view="alerts">
+          <span class="nav-icon" aria-hidden="true">🔔</span>
+          <span class="nav-label">Alerts & Ops</span>
+        </a>
+      </nav>
+      <div class="sidebar-footer p-4 border-t border-subtle">
+        <div class="system-status-indicator flex items-center gap-2 text-xs text-muted">
+          <span class="status-indicator active"></span>
+          <span>12 Adapters Live</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content" id="app-main">
+      <!-- Top Bar -->
+      <header class="top-bar">
+        <div class="top-bar-left flex items-center gap-3">
+          <span class="env-badge env-badge-research" title="Connected to real on-chain public market data with no live execution">
+            <span class="status-indicator active"></span> RESEARCH MODE
+          </span>
+          <span class="env-badge env-badge-live-locked" title="Live execution gateway is locked. Requires explicit hardware signing authorization.">
+            🔒 LIVE LOCKED
+          </span>
+        </div>
+        <div class="top-bar-right flex items-center gap-3">
+          <button id="theme-toggle-btn" class="btn btn-secondary btn-sm" aria-label="Toggle visual theme">
+            🌙 Dark
+          </button>
+        </div>
+      </header>
+
+      <!-- Content Container -->
+      <div class="content-container">
+        <!-- Filter Controls Toolbar -->
+        <div class="filter-toolbar card mb-6">
+          <div class="search-input-group flex-1 min-w-200">
+            <input type="text" id="global-search" class="form-input" placeholder="Search 12 chains: BONK, BRETT, PEPE, contract address..." aria-label="Search tokens">
+          </div>
+          <div class="filter-controls flex items-center gap-2">
+            <select id="chain-filter-select" class="form-select" aria-label="Select chain">
+              <option value="ALL">All 12 Networks</option>
+              <option value="Solana">Solana (SVM)</option>
+              <option value="Base">Base (EVM)</option>
+              <option value="Ethereum">Ethereum (EVM)</option>
+              <option value="BNB Chain">BNB Chain (EVM)</option>
+              <option value="Arbitrum">Arbitrum (EVM)</option>
+              <option value="Optimism">Optimism (EVM)</option>
+              <option value="Polygon">Polygon (EVM)</option>
+              <option value="Avalanche">Avalanche (EVM)</option>
+              <option value="Sui">Sui (Move)</option>
+              <option value="Aptos">Aptos (Move)</option>
+              <option value="TON">TON (TVM)</option>
+              <option value="TRON">TRON (TVM)</option>
+            </select>
+            <select id="risk-filter-select" class="form-select" aria-label="Risk gate grade">
+              <option value="ALL">All Risk Grades</option>
+              <option value="SAFE">Safe Grade Only (80+)</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Dynamic View Content -->
+        <div id="view-content" class="view-content-wrapper">
+          <!-- Populated dynamically by app.js -->
+        </div>
+      </div>
+    </main>
+
+    <!-- Mobile Touch-Friendly Bottom Navigation (< 768px) -->
+    <nav class="bottom-nav" id="app-bottom-nav" aria-label="Mobile Navigation">
+      <button class="bottom-nav-item active" data-view="overview" aria-label="Overview tab">
+        <span class="bottom-nav-icon" aria-hidden="true">📊</span>
+        <span>Overview</span>
+      </button>
+      <button class="bottom-nav-item" data-view="screener" aria-label="Screener tab">
+        <span class="bottom-nav-icon" aria-hidden="true">🔍</span>
+        <span>Screener</span>
+      </button>
+      <button class="bottom-nav-item" data-view="forensics" aria-label="Forensics tab">
+        <span class="bottom-nav-icon" aria-hidden="true">🛡️</span>
+        <span>Forensics</span>
+      </button>
+      <button class="bottom-nav-item" data-view="paper" aria-label="Paper Desks tab">
+        <span class="bottom-nav-icon" aria-hidden="true">📈</span>
+        <span>Paper</span>
+      </button>
+      <button class="bottom-nav-item" data-view="alerts" aria-label="Alerts tab">
+        <span class="bottom-nav-icon" aria-hidden="true">🔔</span>
+        <span>Alerts</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- Deep Forensic Dossier Modal Dialog -->
+  <div id="token-modal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="token-modal-title" hidden>
+    <div class="modal-card">
+      <div class="card-header border-b border-subtle pb-3 mb-4">
+        <h3 id="token-modal-title" class="card-title text-base text-primary">Token Forensic Dossier</h3>
+        <button class="btn-close" aria-label="Close dialog" data-action="close-modal">&times;</button>
+      </div>
+      <div id="token-modal-body" class="modal-body">
+        <!-- Injected dynamically -->
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/static/js/app.js"></script>
+</body>
+</html>
