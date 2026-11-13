@@ -7,6 +7,8 @@ from app.schemas.contracts import (
     TokenSecurityReport, FindingItem, FirstBuyersForensicsResponse, FirstBuyerItem,
     TriState, EvidenceStatus
 )
+from app.services.first_buyers_decoder import first_buyers_decoder
+from app.services.wallet_cluster_engine import WalletClusterEngine
 
 router = APIRouter(prefix="/forensics", tags=["Forensics"])
 
@@ -51,25 +53,36 @@ async def get_first_buyers_forensics(
     """
     Reconstructs the first 10 buyers, checks funding sources, and detects bundled insider buys.
     """
+    # Sample reconstructed earliest transactions for mock/demo until live indexer populates DB
+    mock_creation_slot = 280000100
+    mock_deployer = "DeployerRootWallet111111111111111111111111"
+    raw_txs = [
+        {
+            "tx_signature": f"sig_{i}",
+            "slot": mock_creation_slot,
+            "wallet_address": f"BuyerWallet{i}{'1'*20}",
+            "sol_spent_lamports": 1250000000 - (i * 100000000),
+            "tokens_bought_raw": Decimal("5000000000000") - (i * Decimal("500000000000")),
+            "funder_address": "BinanceHotWallet11111111111111111111111111",
+            "holding_pct": Decimal("2.10") - (Decimal(str(i)) * Decimal("0.2"))
+        }
+        for i in range(1, 6)
+    ]
+
+    analysis = first_buyers_decoder.analyze_buyers(
+        pool_address="PoolAddressExample111111111111111111111111111",
+        deployer_address=mock_deployer,
+        creation_slot=mock_creation_slot,
+        raw_transactions=raw_txs
+    )
+
     return FirstBuyersForensicsResponse(
         mint_address=mint,
         pool_address="PoolAddressExample111111111111111111111111111",
-        deployer_address="DeployerAddress111111111111111111111111111",
-        total_first_buyers_held_pct=Decimal("8.50"),
-        bundler_cluster_detected=False,
-        evidence_status=EvidenceStatus.PROBABILISTIC,
-        detector_version="v2_graph_cluster",
-        buyers=[
-            FirstBuyerItem(
-                buy_rank=1,
-                wallet_address="BuyerWallet1111111111111111111111111111111",
-                sol_spent_lamports=1250000000,
-                tokens_bought_raw=Decimal("5000000000000"),
-                holding_pct=Decimal("2.10"),
-                current_status="HOLDING",
-                funder_address="BinanceHotWallet11111111111111111111111111",
-                is_funder_shared=False,
-                is_same_slot_as_pool=False
-            )
-        ]
+        deployer_address=mock_deployer,
+        total_first_buyers_held_pct=analysis["total_held_pct"],
+        bundler_cluster_detected=analysis["bundler_cluster_detected"],
+        evidence_status=analysis["confidence"],
+        detector_version=WalletClusterEngine.DETECTOR_VERSION,
+        buyers=analysis["buyers"]
     )
