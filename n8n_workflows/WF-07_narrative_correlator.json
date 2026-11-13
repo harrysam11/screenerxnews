@@ -1,0 +1,66 @@
+{
+  "name": "WF-07: Narrative Correlation Engine",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "news-narrative-event",
+        "options": {}
+      },
+      "id": "webhook-news-event",
+      "name": "News Event Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const text = ($json.title + ' ' + ($json.summary || '')).toLowerCase();\nconst sectors = [];\nif (text.includes('ai') || text.includes('agent')) sectors.push('AI');\nif (text.includes('trump') || text.includes('fed')) sectors.push('POLITICS');\nif (text.includes('dog') || text.includes('pepe')) sectors.push('ANIMALS');\nreturn [{\n  json: {\n    news_id: $json.id,\n    title: $json.title,\n    matched_sectors: sectors,\n    sentiment_score: $json.sentiment_score || 0.0,\n    correlated_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "correlate-sectors",
+      "name": "Extract Sectors & Correlate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:8000/api/v1/news/correlate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "post-correlation",
+      "name": "Post Correlation to FastAPI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 300]
+    }
+  ],
+  "connections": {
+    "News Event Webhook": {
+      "main": [
+        [
+          {
+            "node": "Extract Sectors & Correlate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Sectors & Correlate": {
+      "main": [
+        [
+          {
+            "node": "Post Correlation to FastAPI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

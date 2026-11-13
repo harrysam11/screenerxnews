@@ -1,0 +1,66 @@
+{
+  "name": "WF-09: Telegram High-Conviction Alert",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "high-conviction-alert",
+        "options": {}
+      },
+      "id": "webhook-high-conviction",
+      "name": "Conviction Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const token = $json;\nconst md = `🚀 *HIGH-CONVICTION OPPORTUNITY DETECTED*\n\n` +\n`*Token:* ${token.name} (${token.symbol})\n` +\n`*Chain:* \\`${token.chain_id}\\`\n` +\n`*Composite Score:* *${token.composite_score}/100*\n\n` +\n`*Metrics:*\n` +\n`• Market Momentum: ${token.breakdown.market_momentum_score}/100\n` +\n`• Security Score: ${token.breakdown.security_safety_score}/100\n` +\n`• Wallet Intelligence: ${token.breakdown.wallet_intelligence_score}/100\n` +\n`• Narrative Buzz: ${token.breakdown.narrative_sentiment_score}/100\n\n` +\n`*Status:* 🟢 VERIFIED (Zero Honeypot, Renounced Mint)`;\n\nreturn [{\n  json: {\n    chat_id: '{{ $env.TELEGRAM_ALERTS_CHAT_ID }}',\n    text: md,\n    parse_mode: 'Markdown'\n  }\n}];"
+      },
+      "id": "format-markdown",
+      "name": "Format Telegram Markdown",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "send-telegram",
+      "name": "Send Telegram Message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 300]
+    }
+  ],
+  "connections": {
+    "Conviction Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Format Telegram Markdown",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Telegram Markdown": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

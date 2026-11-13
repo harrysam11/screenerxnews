@@ -1,0 +1,66 @@
+{
+  "name": "WF-10: Live Trade Approval Requester",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "live-trade-intent",
+        "options": {}
+      },
+      "id": "webhook-trade-intent",
+      "name": "Trade Intent Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const intent = $json;\nconst md = `⚠️ *ONE-TIME LIVE TRADE APPROVAL REQUIRED*\n\n` +\n`*Intent ID:* \\`${intent.intent_id}\\`\n` +\n`*Chain:* \\`${intent.chain_id}\\`\n` +\n`*Action:* ${intent.side} ${intent.asset_symbol}\n` +\n`*Amount:* ${intent.amount_native} (${intent.amount_usd} USD)\n` +\n`*Digest:* \\`${intent.canonical_intent_digest}\\`\n\n` +\n`⏳ *Expires in 5 minutes.* Click below to approve or deny:`;\n\nconst inlineKeyboard = {\n  inline_keyboard: [\n    [\n      { text: '✅ Approve Trade', url: `http://localhost:8000/api/v1/execution/approve/${intent.intent_id}` },\n      { text: '❌ Reject', url: `http://localhost:8000/api/v1/execution/reject/${intent.intent_id}` }\n    ]\n  ]\n};\n\nreturn [{\n  json: {\n    chat_id: '{{ $env.TELEGRAM_ALERTS_CHAT_ID }}',\n    text: md,\n    parse_mode: 'Markdown',\n    reply_markup: JSON.stringify(inlineKeyboard)\n  }\n}];"
+      },
+      "id": "format-approval",
+      "name": "Format Approval Card",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "dispatch-approval",
+      "name": "Dispatch Approval to Operator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 300]
+    }
+  ],
+  "connections": {
+    "Trade Intent Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Format Approval Card",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Approval Card": {
+      "main": [
+        [
+          {
+            "node": "Dispatch Approval to Operator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

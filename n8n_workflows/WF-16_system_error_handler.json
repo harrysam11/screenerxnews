@@ -1,0 +1,62 @@
+{
+  "name": "WF-16: System Error & Recovery Handler",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "error-trigger",
+      "name": "Global Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const err = $json.execution?.error || { message: 'Unknown Pipeline Exception' };\nconst wf = $json.workflow?.name || 'Unknown Workflow';\nconst md = `🚨 *SYSTEM ALERT: WORKFLOW EXCEPTION*\n\n` +\n`*Workflow:* ${wf}\n` +\n`*Error:* \\`${err.message}\\`\n` +\n`*Timestamp:* ${new Date().toISOString()}\n\n` +\n`Operator review required immediately.`;\n\nreturn [{\n  json: {\n    chat_id: '{{ $env.TELEGRAM_ALERTS_CHAT_ID }}',\n    text: md,\n    parse_mode: 'Markdown'\n  }\n}];"
+      },
+      "id": "format-error",
+      "name": "Format Error Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "send-error-alert",
+      "name": "Send Incident to Telegram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 300]
+    }
+  ],
+  "connections": {
+    "Global Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Format Error Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Error Alert": {
+      "main": [
+        [
+          {
+            "node": "Send Incident to Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
