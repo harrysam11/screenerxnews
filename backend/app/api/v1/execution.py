@@ -10,6 +10,9 @@ from app.schemas.contracts import TradeIntentRequest, TradeIntentResponse, Trade
 
 router = APIRouter(prefix="/execution", tags=["Execution Gateway"])
 
+# In-memory intent state registry with TTL and replay protection
+_INTENTS_REGISTRY: dict[str, dict] = {}
+
 @router.post("/intent", response_model=TradeIntentResponse)
 async def create_trade_intent(
     payload: TradeIntentRequest,
@@ -43,8 +46,22 @@ async def create_trade_intent(
     canonical_digest = hashlib.sha256(raw_intent_str.encode()).hexdigest()
     msg_hash = hashlib.sha256(canonical_digest.encode()).hexdigest()
 
+    intent_id = str(uuid.uuid4())
+    expires_at = now + timedelta(minutes=2)
+
+    # Register in intent tracking registry
+    _INTENTS_REGISTRY[intent_id] = {
+        "intent_id": intent_id,
+        "wallet_address": payload.wallet_address,
+        "transaction_message_hash": msg_hash,
+        "canonical_intent_digest": canonical_digest,
+        "expires_at": expires_at,
+        "is_consumed": False,
+        "policy_checks_passed": is_passed
+    }
+
     return TradeIntentResponse(
-        intent_id=str(uuid.uuid4()),
+        intent_id=intent_id,
         status="PENDING_APPROVAL" if is_passed else "REJECTED",
         wallet_address=payload.wallet_address,
         input_amount_raw=payload.input_amount_raw,
@@ -52,7 +69,7 @@ async def create_trade_intent(
         estimated_price_impact_bps=120,
         canonical_intent_digest=canonical_digest,
         transaction_message_hash=msg_hash,
-        expires_at=now + timedelta(minutes=2),
+        expires_at=expires_at,
         policy_checks_passed=is_passed,
         rejection_reasons=rejection_reasons
     )
@@ -65,8 +82,54 @@ async def approve_trade_intent(
 ):
     """
     Registers client-side signature approval hash.
+    Enforces existence, TTL expiry, canonical digest verification, and one-time consumption (replay defense).
     No private keys ever enter or are processed by this backend service.
     """
+    intent = _INTENTS_REGISTRY.get(intent_id)
+    if not intent:
+        raise HTTPException(
+            status_code=404,
+            detail="SECURITY VIOLATION: Trade intent not found or never issued."
+        )
+
+    # Check TTL expiration
+    if datetime.now(timezone.utc) > intent["expires_at"]:
+        raise HTTPException(
+            status_code=410,
+            detail="SECURITY VIOLATION: Trade intent has expired. Re-approval rejected."
+        )
+
+    # Check replay attack (one-time consumption)
+    if intent["is_consumed"]:
+        raise HTTPException(
+            status_code=409,
+            detail="SECURITY VIOLATION: Trade approval already consumed (Replay attack prevented)."
+        )
+
+    # Check transaction message hash match
+    if payload.transaction_message_hash != intent["transaction_message_hash"]:
+        raise HTTPException(
+            status_code=400,
+            detail="SECURITY VIOLATION: Transaction message hash does not match canonical intent digest."
+        )
+
+    # Check Cold Vault blacklist
+    if payload.signed_by_address in settings.COLD_VAULT_ADDRESSES:
+        raise HTTPException(
+            status_code=403,
+            detail="SECURITY VIOLATION: Cold vault signatures are permanently forbidden."
+        )
+
+    # Check Burner Wallet whitelist if configured
+    if settings.BURNER_WALLET_ADDRESSES and payload.signed_by_address not in settings.BURNER_WALLET_ADDRESSES:
+        raise HTTPException(
+            status_code=403,
+            detail="SECURITY VIOLATION: Signer is not an authorized burner wallet address."
+        )
+
+    # Mark consumed atomically
+    intent["is_consumed"] = True
+
     if not settings.ALLOW_LIVE_TRADING:
         return {
             "status": "APPROVAL_ACKNOWLEDGED_SIMULATION_ONLY",
@@ -77,6 +140,6 @@ async def approve_trade_intent(
     return {
         "status": "APPROVED",
         "intent_id": intent_id,
-        "is_consumed": False,
+        "is_consumed": True,
         "message": "Approval registered. Transaction ready for client wallet submission."
     }

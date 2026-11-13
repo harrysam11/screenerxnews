@@ -153,7 +153,7 @@ class MultiChainScorer:
             score += Decimal("30.0")
         if not is_proxy:
             score += Decimal("10.0")
-        if sell_tax_bps is None or sell_tax_bps <= 500:
+        if sell_tax_bps is not None and sell_tax_bps <= 500:
             score += Decimal("10.0")
 
         return {

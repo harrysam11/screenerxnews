@@ -190,6 +190,8 @@ class ChainRegistry:
         }
 
     def get_chain(self, chain_id: str) -> Optional[ChainConfig]:
+        if chain_id == "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp":
+            chain_id = "solana:mainnet"
         return self._chains.get(chain_id)
 
     def list_active_chains(self) -> List[ChainConfig]:
