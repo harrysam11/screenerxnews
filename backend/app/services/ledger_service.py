@@ -2,8 +2,10 @@ import os
 import sqlite3
 import threading
 from typing import Dict, Any, List, Optional
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime, timezone
+
+USD_UNITS_SCALE = Decimal("100000000")  # 10^8 fixed-point scale factor (1 USD unit = 10^-8 USD)
 
 class LedgerError(Exception):
     """Base error for financial ledger violations."""
@@ -103,7 +105,7 @@ class DoubleEntryLedgerService:
                         SELECT RAISE(ABORT, 'FINANCIAL INTEGRITY VIOLATION: Status rollback or invalid transition forbidden. State POSTED is irreversible.');
                     END;
                 """)
-                # 3. On status transition to POSTED, verify lines >= 2 and exact integer balance (debit_usd_units == credit_usd_units)
+                # 3. On status transition to POSTED, verify lines >= 2, raw/rate fixed-point consistency, and exact integer balance
                 conn.execute("""
                     CREATE TRIGGER IF NOT EXISTS trg_check_journal_post_invariants
                     BEFORE UPDATE OF status ON ledger_journals
@@ -111,6 +113,17 @@ class DoubleEntryLedgerService:
                     BEGIN
                         SELECT RAISE(ABORT, 'FINANCIAL INTEGRITY VIOLATION (LEDGER-03): Journal has fewer than 2 lines.')
                         WHERE (SELECT COUNT(*) FROM ledger_lines WHERE journal_id = NEW.id) < 2;
+
+                        SELECT RAISE(ABORT, 'FINANCIAL INTEGRITY VIOLATION (LEDGER-01): Line fixed-point USD units do not match source raw amount and USD rate.')
+                        WHERE EXISTS (
+                            SELECT 1 FROM ledger_lines
+                            WHERE journal_id = NEW.id
+                              AND (
+                                  debit_usd_units != CAST(ROUND(CAST(debit_amount_raw AS NUMERIC) * CAST(usd_rate AS NUMERIC) * 100000000.0) AS INTEGER)
+                                  OR
+                                  credit_usd_units != CAST(ROUND(CAST(credit_amount_raw AS NUMERIC) * CAST(usd_rate AS NUMERIC) * 100000000.0) AS INTEGER)
+                              )
+                        );
 
                         SELECT RAISE(ABORT, 'FINANCIAL INTEGRITY VIOLATION (LEDGER-01): Journal debits and credits do not balance in exact integer units.')
                         WHERE (
@@ -207,10 +220,15 @@ class DoubleEntryLedgerService:
             if debit == Decimal("0") and credit == Decimal("0"):
                 raise LedgerError("Ledger line must have at least one non-zero side")
 
-            total_debits_usd += debit * usd_rate
-            total_credits_usd += credit * usd_rate
+            debit_usd = debit * usd_rate
+            credit_usd = credit * usd_rate
 
-            usd_units_scale = Decimal("100000000")
+            total_debits_usd += debit_usd
+            total_credits_usd += credit_usd
+
+            debit_units = int((debit_usd * USD_UNITS_SCALE).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+            credit_units = int((credit_usd * USD_UNITS_SCALE).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
             parsed_lines.append({
                 "account_code": account,
                 "wallet_address": line["wallet_address"],
@@ -218,13 +236,16 @@ class DoubleEntryLedgerService:
                 "debit_amount_raw": str(debit),
                 "credit_amount_raw": str(credit),
                 "usd_rate": str(usd_rate),
-                "debit_usd_units": int(debit * usd_rate * usd_units_scale),
-                "credit_usd_units": int(credit * usd_rate * usd_units_scale)
+                "debit_usd_units": debit_units,
+                "credit_usd_units": credit_units
             })
 
-        if total_debits_usd != total_credits_usd:
+        total_debits_units = sum(pl["debit_usd_units"] for pl in parsed_lines)
+        total_credits_units = sum(pl["credit_usd_units"] for pl in parsed_lines)
+
+        if total_debits_usd != total_credits_usd or total_debits_units != total_credits_units:
             raise UnbalancedJournalError(
-                f"DOUBLE-ENTRY BALANCE VIOLATION (LEDGER-02): Total debits ({total_debits_usd}) != Total credits ({total_credits_usd})."
+                f"DOUBLE-ENTRY BALANCE VIOLATION (LEDGER-02): Total debits ({total_debits_usd} / {total_debits_units} units) != Total credits ({total_credits_usd} / {total_credits_units} units)."
             )
 
         now_iso = datetime.now(timezone.utc).isoformat()

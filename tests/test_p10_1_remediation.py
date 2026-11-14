@@ -82,6 +82,7 @@ def test_execution_intent_zero_trust_approvals():
     burner_wallet = b58encode(sk.verify_key.encode())
     cold_vault = "ColdVaultRemediation111111111111111111111"
     settings.COLD_VAULT_ADDRESSES = [cold_vault]
+    settings.BURNER_WALLET_ADDRESSES = [burner_wallet]
 
     # 1. Unknown intent rejection
     res_404 = client.post("/api/v1/execution/approve/non-existent-uuid-1234", json={

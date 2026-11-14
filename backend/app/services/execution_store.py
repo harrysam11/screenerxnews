@@ -84,7 +84,7 @@ class ExecutionIntentStore:
         self._init_db()
 
     def _get_connection(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path, timeout=10.0, check_same_thread=False)
+        conn = sqlite3.connect(self.db_path, timeout=10.0, check_same_thread=False, isolation_level=None)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode = WAL;")
         conn.execute("PRAGMA foreign_keys = ON;")
@@ -92,7 +92,9 @@ class ExecutionIntentStore:
 
     def _init_db(self):
         with self._lock:
-            with self._get_connection() as conn:
+            conn = self._get_connection()
+            try:
+                conn.execute("BEGIN IMMEDIATE;")
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS execution_intents (
                         intent_id TEXT PRIMARY KEY,
@@ -120,11 +122,21 @@ class ExecutionIntentStore:
                         consumed_at TEXT
                     );
                 """)
-                conn.commit()
+                conn.execute("COMMIT;")
+            except Exception:
+                try:
+                    conn.execute("ROLLBACK;")
+                except Exception:
+                    pass
+                raise
+            finally:
+                conn.close()
 
     def save_intent(self, intent_data: Dict[str, Any]) -> None:
         with self._lock:
-            with self._get_connection() as conn:
+            conn = self._get_connection()
+            try:
+                conn.execute("BEGIN IMMEDIATE;")
                 reasons_str = ",".join(intent_data.get("rejection_reasons", []))
                 conn.execute("""
                     INSERT INTO execution_intents (
@@ -167,10 +179,19 @@ class ExecutionIntentStore:
                     1 if intent_data.get("is_consumed", False) else 0,
                     intent_data.get("consumed_at")
                 ))
-                conn.commit()
+                conn.execute("COMMIT;")
+            except Exception:
+                try:
+                    conn.execute("ROLLBACK;")
+                except Exception:
+                    pass
+                raise
+            finally:
+                conn.close()
 
     def get_intent(self, intent_id: str) -> Optional[Dict[str, Any]]:
-        with self._get_connection() as conn:
+        conn = self._get_connection()
+        try:
             cur = conn.execute("SELECT * FROM execution_intents WHERE intent_id = ?", (intent_id,))
             row = cur.fetchone()
             if not row:
@@ -180,6 +201,8 @@ class ExecutionIntentStore:
             data["is_consumed"] = bool(data["is_consumed"])
             data["rejection_reasons"] = data["rejection_reasons"].split(",") if data["rejection_reasons"] else []
             return data
+        finally:
+            conn.close()
 
     def atomic_approve_intent(
         self,
@@ -190,14 +213,17 @@ class ExecutionIntentStore:
     ) -> Dict[str, Any]:
         """
         Executes atomic intent approval with full zero-trust validation:
-        - EXEC-01: Rejected intents cannot be approved (throws 422).
-        - EXEC-02: Signer must match the authorized wallet (throws 403).
-        - EXEC-03: Changed message hash / payload invalidates approval (throws 400).
-        - EXEC-04: Expired intent is rejected (throws 410).
-        - EXEC-05 & EXEC-06: Atomic consumption prevents duplicate/concurrent approval (throws 409).
+        - Transaction Isolation: Starts SQLite BEGIN IMMEDIATE before reading intent to lock out concurrent writers.
+        - Fail-Closed Policy: Empty or missing burner wallet allowlist fails closed.
+        - EVM Normalization: Consistent lowercasing for EVM addresses, strict case sensitivity for Solana.
+        - Canonical Reconstruction: Rebuilds canonical message from database fields and verifies digest.
+        - Cryptographic Verification: Validates single EIP-191 personal sign format for EVM or Ed25519 for Solana.
         """
         with self._lock:
-            with self._get_connection() as conn:
+            conn = self._get_connection()
+            try:
+                # 0. Acquire SQLite write reservation BEFORE reading to prevent cross-process race conditions
+                conn.execute("BEGIN IMMEDIATE;")
                 cur = conn.execute("SELECT * FROM execution_intents WHERE intent_id = ?", (intent_id,))
                 row = cur.fetchone()
                 if not row:
@@ -232,41 +258,60 @@ class ExecutionIntentStore:
                 now = datetime.now(timezone.utc)
                 if now > expires_at:
                     conn.execute("UPDATE execution_intents SET status = ? WHERE intent_id = ?", (IntentLifecycleState.EXPIRED, intent_id))
-                    conn.commit()
+                    conn.execute("COMMIT;")
                     raise HTTPException(
                         status_code=410,
                         detail="SECURITY VIOLATION (EXEC-04): Trade intent has expired. Re-approval rejected."
                     )
 
-                # 4. Cold Vault Hard Reject
-                if signed_by_address in settings.COLD_VAULT_ADDRESSES:
+                # 4. Wallet address normalization & policy checks
+                is_evm = intent["chain_id"].startswith("eip155:")
+                norm_signer = signed_by_address.lower().strip() if is_evm else signed_by_address.strip()
+                norm_intent_wallet = intent["wallet_address"].lower().strip() if is_evm else intent["wallet_address"].strip()
+
+                # Cold Vault Hard Reject (fail closed)
+                cold_vaults = [
+                    (cv.lower().strip() if is_evm else cv.strip())
+                    for cv in settings.COLD_VAULT_ADDRESSES
+                ]
+                if norm_signer in cold_vaults:
                     raise HTTPException(
                         status_code=403,
                         detail="SECURITY VIOLATION: Cold vault signatures are permanently forbidden."
                     )
 
-                # 5. EXEC-02: Signer must match originally authorized wallet
-                if signed_by_address != intent["wallet_address"]:
+                # EXEC-02: Signer must match originally authorized wallet
+                if norm_signer != norm_intent_wallet:
                     raise HTTPException(
                         status_code=403,
                         detail="SECURITY VIOLATION (EXEC-02): Signer address does not match the authorized wallet."
                     )
 
-                # 6. Burner Wallet Whitelist Verification
-                if settings.BURNER_WALLET_ADDRESSES and signed_by_address not in settings.BURNER_WALLET_ADDRESSES:
+                # Burner Wallet Whitelist Verification (FAIL-CLOSED)
+                if not settings.BURNER_WALLET_ADDRESSES:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="SECURITY VIOLATION: Burner wallet allowlist is empty or unconfigured (fail-closed policy)."
+                    )
+
+                burner_allowlist = [
+                    (bw.lower().strip() if is_evm else bw.strip())
+                    for bw in settings.BURNER_WALLET_ADDRESSES
+                ]
+                if norm_signer not in burner_allowlist:
                     raise HTTPException(
                         status_code=403,
                         detail="SECURITY VIOLATION: Signer is not an authorized burner wallet address."
                     )
 
-                # 7. Cryptographic Signature Verification (MANDATORY presence check)
+                # 5. Cryptographic Signature Verification (MANDATORY presence check)
                 if not signature_hex or not signature_hex.strip():
                     raise HTTPException(
                         status_code=403,
                         detail="SECURITY VIOLATION (EXEC-02): Cryptographic signature is mandatory for intent approval."
                     )
 
-                # 8. Independent Canonical Message Reconstruction (EXEC-03 / P10.2-A.2)
+                # 6. Independent Canonical Message Reconstruction (EXEC-03 / P10.2-A.2)
                 reconstructed_msg = build_canonical_intent_message(
                     intent_id=intent["intent_id"],
                     chain_id=intent["chain_id"],
@@ -299,7 +344,7 @@ class ExecutionIntentStore:
                         detail="SECURITY VIOLATION (EXEC-03): Transaction message hash does not match canonical intent digest."
                     )
 
-                # 9. Cryptographic Signature Verification
+                # 7. Cryptographic Signature Verification
                 clean_sig = signature_hex.strip()
                 if clean_sig.startswith("0x"):
                     clean_sig = clean_sig[2:]
@@ -325,7 +370,7 @@ class ExecutionIntentStore:
                         detail="SECURITY VIOLATION (EXEC-03): Cryptographic signature verification failed or signer address mismatch."
                     )
 
-                # 9. EXEC-05 & EXEC-06: Atomic consumption in database
+                # 8. EXEC-05 & EXEC-06: Atomic state transition within BEGIN IMMEDIATE transaction
                 update_cur = conn.execute("""
                     UPDATE execution_intents
                     SET status = ?, is_consumed = 1, consumed_at = ?
@@ -336,7 +381,6 @@ class ExecutionIntentStore:
                     intent_id,
                     IntentLifecycleState.AWAITING_APPROVAL
                 ))
-                conn.commit()
 
                 if update_cur.rowcount == 0:
                     raise HTTPException(
@@ -344,11 +388,20 @@ class ExecutionIntentStore:
                         detail="SECURITY VIOLATION (EXEC-06): Trade approval race condition detected. Already consumed."
                     )
 
+                conn.execute("COMMIT;")
                 return {
                     "intent_id": intent_id,
                     "status": "APPROVED",
                     "is_consumed": True,
                     "consumed_at": now.isoformat()
                 }
+            except Exception:
+                try:
+                    conn.execute("ROLLBACK;")
+                except Exception:
+                    pass
+                raise
+            finally:
+                conn.close()
 
 execution_intent_store = ExecutionIntentStore()

@@ -69,6 +69,7 @@ def test_paper_live_physical_decoupling():
 
     sk = nacl.signing.SigningKey.generate()
     burner_wallet = b58encode(sk.verify_key.encode())
+    settings.BURNER_WALLET_ADDRESSES = [burner_wallet]
 
     intent_payload = {
         "asset_id": "00000000-0000-0000-0000-000000000001",

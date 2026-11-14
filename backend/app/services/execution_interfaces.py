@@ -206,6 +206,10 @@ def ec_recover_evm_address(msghash: bytes, r: int, s: int, v: int) -> Optional[s
 
     y_sq = (pow(x, 3, _SECP_P) + _SECP_B) % _SECP_P
     y = pow(y_sq, (_SECP_P + 1) // 4, _SECP_P)
+    # Cryptographic check: Ensure y_sq is indeed a quadratic residue modulo P
+    if (y * y) % _SECP_P != y_sq:
+        return None
+
     if (y % 2) != (recid & 1):
         y = _SECP_P - y
 
@@ -217,11 +221,23 @@ def ec_recover_evm_address(msghash: bytes, r: int, s: int, v: int) -> Optional[s
         return None
     neg_zG = (zG[0], (_SECP_P - zG[1]) % _SECP_P)
     diff = _point_add(sR, neg_zG)
+    if diff is None:
+        return None
     r_inv = _inv(r, _SECP_N)
     pub = _point_mul(r_inv, diff)
     if pub is None:
         return None
-    pub_bytes = pub[0].to_bytes(32, 'big') + pub[1].to_bytes(32, 'big')
+
+    # Curve point validation & subgroup order requirement (n * Q = O)
+    px, py = pub
+    if not (0 <= px < _SECP_P and 0 <= py < _SECP_P):
+        return None
+    if (py * py - (pow(px, 3, _SECP_P) + _SECP_B)) % _SECP_P != 0:
+        return None
+    if _point_mul(_SECP_N, pub) is not None:
+        return None
+
+    pub_bytes = px.to_bytes(32, 'big') + py.to_bytes(32, 'big')
     addr_bytes = keccak256(pub_bytes)[-20:]
     return '0x' + addr_bytes.hex()
 
