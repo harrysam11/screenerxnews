@@ -12,7 +12,12 @@ from app.schemas.contracts import (
     TradeApprovalRequest,
     IntentState
 )
-from app.services.execution_store import execution_intent_store, IntentLifecycleState
+from app.services.execution_store import (
+    execution_intent_store,
+    IntentLifecycleState,
+    build_canonical_intent_message,
+    compute_intent_digest
+)
 
 router = APIRouter(prefix="/execution", tags=["Execution Gateway"])
 
@@ -45,33 +50,54 @@ async def create_trade_intent(
     is_passed = len(rejection_reasons) == 0
 
     now = datetime.now(timezone.utc)
-    # Canonical intent digest binds exact parameters
-    raw_intent_str = (
-        f"{payload.chain_id}:{payload.wallet_address}:{payload.input_mint}:{payload.output_mint}:"
-        f"{payload.input_amount_raw}:{payload.max_slippage_bps}:{payload.destination_router or ''}:{now.isoformat()}"
-    )
-    canonical_digest = hashlib.sha256(raw_intent_str.encode()).hexdigest()
-    msg_hash = hashlib.sha256(canonical_digest.encode()).hexdigest()
-
     intent_id = str(uuid.uuid4())
     expires_at = now + timedelta(minutes=2)
+    destination_router = payload.destination_router or "default"
+    strategy_id = payload.strategy_id or "direct"
+    strategy_version = payload.strategy_version or "1.0"
+    nonce = payload.nonce or str(uuid.uuid4())
+    asset_id = payload.asset_id or ""
+    pool_id = payload.pool_id or ""
+    side = payload.side or "BUY"
+
+    # Canonical intent message covers all 15 authorization-critical fields
+    canonical_msg = build_canonical_intent_message(
+        intent_id=intent_id,
+        chain_id=payload.chain_id,
+        wallet_address=payload.wallet_address,
+        input_mint=payload.input_mint,
+        output_mint=payload.output_mint,
+        input_amount_raw=str(payload.input_amount_raw),
+        max_slippage_bps=payload.max_slippage_bps,
+        destination_router=destination_router,
+        asset_id=asset_id,
+        pool_id=pool_id,
+        side=side,
+        strategy_id=strategy_id,
+        strategy_version=strategy_version,
+        nonce=nonce,
+        expires_at=expires_at.isoformat()
+    )
+    canonical_digest = compute_intent_digest(canonical_msg)
+    msg_hash = hashlib.sha256(canonical_digest.encode("utf-8")).hexdigest()
+
     lifecycle_status = IntentLifecycleState.AWAITING_APPROVAL if is_passed else IntentLifecycleState.POLICY_REJECTED
 
     intent_record = {
         "intent_id": intent_id,
         "chain_id": payload.chain_id,
         "wallet_address": payload.wallet_address,
-        "asset_id": payload.asset_id,
-        "pool_id": payload.pool_id,
-        "side": payload.side,
+        "asset_id": asset_id,
+        "pool_id": pool_id,
+        "side": side,
         "input_mint": payload.input_mint,
         "output_mint": payload.output_mint,
         "input_amount_raw": payload.input_amount_raw,
         "max_slippage_bps": payload.max_slippage_bps,
-        "destination_router": payload.destination_router or "default",
-        "strategy_id": payload.strategy_id or "direct",
-        "strategy_version": payload.strategy_version or "1.0",
-        "nonce": payload.nonce or str(uuid.uuid4()),
+        "destination_router": destination_router,
+        "strategy_id": strategy_id,
+        "strategy_version": strategy_version,
+        "nonce": nonce,
         "canonical_intent_digest": canonical_digest,
         "transaction_message_hash": msg_hash,
         "status": lifecycle_status,
@@ -108,9 +134,17 @@ async def approve_trade_intent(
     """
     Registers client-side signature approval hash.
     Enforces existence, TTL expiry, exact digest verification, wallet binding, and atomic consumption.
+    Mandatory cryptographic signature verification is required before approval can be acknowledged.
     No private keys ever enter or are processed by this backend service.
     """
-    # Atomic database approval with zero-trust checks
+    # 1. Mandatory Signature Check
+    if not payload.signature or not payload.signature.strip():
+        raise HTTPException(
+            status_code=403,
+            detail="SECURITY VIOLATION (EXEC-02): Cryptographic signature is mandatory for trade approval."
+        )
+
+    # 2. Atomic database approval with zero-trust cryptographic checks
     result = execution_intent_store.atomic_approve_intent(
         intent_id=intent_id,
         signed_by_address=payload.signed_by_address,
@@ -122,12 +156,14 @@ async def approve_trade_intent(
         return {
             "status": "APPROVAL_ACKNOWLEDGED_SIMULATION_ONLY",
             "intent_id": intent_id,
-            "message": "Live trading is currently disabled by environment policy. Simulation mode active."
+            "signature_verified": True,
+            "message": "Cryptographic signature verified. Live trading is currently disabled by environment policy. Simulation mode active."
         }
 
     return {
         "status": "APPROVED",
         "intent_id": intent_id,
         "is_consumed": True,
-        "message": "Approval registered. Transaction ready for client wallet submission."
+        "signature_verified": True,
+        "message": "Approval registered and cryptographically verified. Transaction ready for client wallet submission."
     }

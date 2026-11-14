@@ -4,9 +4,54 @@ import threading
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
+import hashlib
 from fastapi import HTTPException
 from app.core.config import settings
 from app.services.execution_interfaces import ChainSignatureVerifier
+
+def build_canonical_intent_message(
+    intent_id: str,
+    chain_id: str,
+    wallet_address: str,
+    input_mint: str,
+    output_mint: str,
+    input_amount_raw: Any,
+    max_slippage_bps: int,
+    destination_router: str,
+    asset_id: str,
+    pool_id: str,
+    side: str,
+    strategy_id: str,
+    strategy_version: str,
+    nonce: str,
+    expires_at: str
+) -> str:
+    """
+    Constructs a deterministic canonical string containing every authorization-critical field.
+    Binds intent_id, chain_id, wallet, mints, asset_id, pool_id, side, amount, slippage,
+    router, strategy_id, strategy_version, nonce, and expiration.
+    """
+    wallet_norm = wallet_address.lower().strip() if chain_id.startswith("eip155:") else wallet_address.strip()
+    return (
+        f"intent_id={intent_id}&"
+        f"chain_id={chain_id}&"
+        f"wallet={wallet_norm}&"
+        f"in_token={input_mint}&"
+        f"out_token={output_mint}&"
+        f"amount={input_amount_raw}&"
+        f"slippage={max_slippage_bps}&"
+        f"router={destination_router}&"
+        f"asset_id={asset_id}&"
+        f"pool_id={pool_id}&"
+        f"side={side}&"
+        f"strategy_id={strategy_id}&"
+        f"strategy_version={strategy_version}&"
+        f"nonce={nonce}&"
+        f"expires_at={expires_at}"
+    )
+
+def compute_intent_digest(canonical_message: str) -> str:
+    return hashlib.sha256(canonical_message.encode("utf-8")).hexdigest()
 
 class IntentLifecycleState:
     CREATED = "CREATED"
@@ -221,21 +266,37 @@ class ExecutionIntentStore:
                         detail="SECURITY VIOLATION: Signer is not an authorized burner wallet address."
                     )
 
-                # 8. Cryptographic Signature Verification
-                if signature_hex:
-                    sig_bytes = bytes.fromhex(signature_hex)
-                    msg_bytes = intent["canonical_intent_digest"].encode()
-                    is_valid = self._verifier.verify(
-                        chain_id=intent["chain_id"],
-                        signer_address=signed_by_address,
-                        message_bytes=msg_bytes,
-                        signature_bytes=sig_bytes
+                # 8. Cryptographic Signature Verification (MANDATORY)
+                if not signature_hex or not signature_hex.strip():
+                    raise HTTPException(
+                        status_code=403,
+                        detail="SECURITY VIOLATION (EXEC-02): Cryptographic signature is mandatory for intent approval."
                     )
-                    if not is_valid:
-                        raise HTTPException(
-                            status_code=400,
-                            detail="SECURITY VIOLATION: Cryptographic signature verification failed."
-                        )
+
+                clean_sig = signature_hex.strip()
+                if clean_sig.startswith("0x"):
+                    clean_sig = clean_sig[2:]
+
+                try:
+                    sig_bytes = bytes.fromhex(clean_sig)
+                except Exception:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="SECURITY VIOLATION: Invalid hexadecimal signature encoding."
+                    )
+
+                msg_bytes = intent["canonical_intent_digest"].encode("utf-8")
+                is_valid = self._verifier.verify(
+                    chain_id=intent["chain_id"],
+                    signer_address=signed_by_address,
+                    message_bytes=msg_bytes,
+                    signature_bytes=sig_bytes
+                )
+                if not is_valid:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="SECURITY VIOLATION (EXEC-03): Cryptographic signature verification failed or signer address mismatch."
+                    )
 
                 # 9. EXEC-05 & EXEC-06: Atomic consumption in database
                 update_cur = conn.execute("""

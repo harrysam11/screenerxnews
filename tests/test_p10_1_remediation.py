@@ -75,14 +75,19 @@ def test_execution_intent_zero_trust_approvals():
     - 410 on expired intent
     - 403 on cold vault signer
     """
-    burner_wallet = "BurnerWalletRemediation111111111111111111"
+    import nacl.signing
+    from app.services.execution_interfaces import b58encode
+
+    sk = nacl.signing.SigningKey.generate()
+    burner_wallet = b58encode(sk.verify_key.encode())
     cold_vault = "ColdVaultRemediation111111111111111111111"
     settings.COLD_VAULT_ADDRESSES = [cold_vault]
 
     # 1. Unknown intent rejection
     res_404 = client.post("/api/v1/execution/approve/non-existent-uuid-1234", json={
         "transaction_message_hash": "dummyhash",
-        "signed_by_address": burner_wallet
+        "signed_by_address": burner_wallet,
+        "signature": "abcd" * 16
     })
     assert res_404.status_code == 404
     assert "not found" in res_404.json()["detail"].lower()
@@ -103,11 +108,16 @@ def test_execution_intent_zero_trust_approvals():
     intent_data = create_res.json()
     intent_id = intent_data["intent_id"]
     correct_hash = intent_data["transaction_message_hash"]
+    canonical_digest = intent_data["canonical_intent_digest"]
+
+    # Compute genuine signature for canonical digest
+    valid_sig = sk.sign(canonical_digest.encode("utf-8")).signature.hex()
 
     # 3. Hash mismatch rejection
     res_400 = client.post(f"/api/v1/execution/approve/{intent_id}", json={
         "transaction_message_hash": "tampered_wrong_hash_value",
-        "signed_by_address": burner_wallet
+        "signed_by_address": burner_wallet,
+        "signature": valid_sig
     })
     assert res_400.status_code == 400
     assert "does not match" in res_400.json()["detail"].lower()
@@ -115,30 +125,45 @@ def test_execution_intent_zero_trust_approvals():
     # 4. Cold vault signer rejection
     res_403 = client.post(f"/api/v1/execution/approve/{intent_id}", json={
         "transaction_message_hash": correct_hash,
-        "signed_by_address": cold_vault
+        "signed_by_address": cold_vault,
+        "signature": valid_sig
     })
     assert res_403.status_code == 403
     assert "cold vault" in res_403.json()["detail"].lower()
 
-    # 5. Successful first consumption
-    res_200 = client.post(f"/api/v1/execution/approve/{intent_id}", json={
+    # 5. Missing signature rejection (mandatory signature enforcement)
+    res_no_sig = client.post(f"/api/v1/execution/approve/{intent_id}", json={
         "transaction_message_hash": correct_hash,
         "signed_by_address": burner_wallet
     })
-    assert res_200.status_code == 200
+    assert res_no_sig.status_code == 403
+    assert "signature is mandatory" in res_no_sig.json()["detail"].lower()
 
-    # 6. Replay attack rejection (second attempt on consumed intent)
+    # 6. Successful first consumption
+    res_200 = client.post(f"/api/v1/execution/approve/{intent_id}", json={
+        "transaction_message_hash": correct_hash,
+        "signed_by_address": burner_wallet,
+        "signature": valid_sig
+    })
+    assert res_200.status_code == 200
+    assert res_200.json().get("signature_verified") is True
+
+    # 7. Replay attack rejection (second attempt on consumed intent)
     res_409 = client.post(f"/api/v1/execution/approve/{intent_id}", json={
         "transaction_message_hash": correct_hash,
-        "signed_by_address": burner_wallet
+        "signed_by_address": burner_wallet,
+        "signature": valid_sig
     })
     assert res_409.status_code == 409
     assert "already consumed" in res_409.json()["detail"].lower()
 
-    # 7. Expired intent rejection
+    # 8. Expired intent rejection
     create_expired = client.post("/api/v1/execution/intent", json=intent_payload)
     expired_id = create_expired.json()["intent_id"]
     expired_hash = create_expired.json()["transaction_message_hash"]
+    expired_digest = create_expired.json()["canonical_intent_digest"]
+    expired_sig = sk.sign(expired_digest.encode("utf-8")).signature.hex()
+
     # Artificially expire the intent TTL in store
     with execution_intent_store._get_connection() as conn:
         conn.execute("UPDATE execution_intents SET expires_at = ? WHERE intent_id = ?",
@@ -147,7 +172,8 @@ def test_execution_intent_zero_trust_approvals():
 
     res_410 = client.post(f"/api/v1/execution/approve/{expired_id}", json={
         "transaction_message_hash": expired_hash,
-        "signed_by_address": burner_wallet
+        "signed_by_address": burner_wallet,
+        "signature": expired_sig
     })
     assert res_410.status_code == 410
     assert "expired" in res_410.json()["detail"].lower()

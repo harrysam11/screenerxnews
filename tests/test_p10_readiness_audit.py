@@ -64,10 +64,16 @@ def test_paper_live_physical_decoupling():
     assert settings.ALLOW_LIVE_TRADING is False
 
     # 3. Intent execution in simulation mode
+    import nacl.signing
+    from app.services.execution_interfaces import b58encode
+
+    sk = nacl.signing.SigningKey.generate()
+    burner_wallet = b58encode(sk.verify_key.encode())
+
     intent_payload = {
         "asset_id": "00000000-0000-0000-0000-000000000001",
         "pool_id": "00000000-0000-0000-0000-000000000002",
-        "wallet_address": "BurnerWalletMock111111111111111111111111111",
+        "wallet_address": burner_wallet,
         "side": "BUY",
         "input_mint": "So11111111111111111111111111111111111111112",
         "output_mint": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
@@ -78,14 +84,17 @@ def test_paper_live_physical_decoupling():
     assert intent_res.status_code == 200
     intent_data = intent_res.json()
     intent_id = intent_data["intent_id"]
+    sig = sk.sign(intent_data["canonical_intent_digest"].encode("utf-8")).signature.hex()
 
     # 4. Attempting to approve must yield SIMULATION ONLY when live trading is disabled
     approve_res = client.post(f"/api/v1/execution/approve/{intent_id}", json={
         "transaction_message_hash": intent_data["transaction_message_hash"],
-        "signed_by_address": "BurnerWalletMock111111111111111111111111111"
+        "signed_by_address": burner_wallet,
+        "signature": sig
     })
     assert approve_res.status_code == 200
     assert approve_res.json()["status"] == "APPROVAL_ACKNOWLEDGED_SIMULATION_ONLY"
+    assert approve_res.json().get("signature_verified") is True
 
 
 # =====================================================================
