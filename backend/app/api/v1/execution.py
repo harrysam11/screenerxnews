@@ -2,7 +2,8 @@ import uuid
 import hashlib
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_db
@@ -18,6 +19,7 @@ from app.services.execution_store import (
     build_canonical_intent_message,
     compute_intent_digest
 )
+from app.services.live_execution_engine import live_execution_engine
 
 router = APIRouter(prefix="/execution", tags=["Execution Gateway"])
 
@@ -167,3 +169,29 @@ async def approve_trade_intent(
         "signature_verified": True,
         "message": "Approval registered and cryptographically verified. Transaction ready for client wallet submission."
     }
+
+@router.post("/broadcast/{intent_id}")
+async def broadcast_trade_intent(
+    intent_id: str,
+    live_authorization_token: Optional[str] = Header(None, alias="X-Live-Trading-Authorization"),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Submits an approved intent to the execution gateway.
+    When ALLOW_LIVE_TRADING=False, executes strictly in simulated broadcast mode.
+    Requires separate operator authorization token for live execution.
+    """
+    return live_execution_engine.broadcast_intent(
+        intent_id=intent_id,
+        live_auth_token=live_authorization_token
+    )
+
+@router.get("/reconcile/{intent_id}")
+async def reconcile_intent_finality(
+    intent_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Reconciles final on-chain confirmation status and double-entry ledger balance.
+    """
+    return live_execution_engine.reconcile_finality(intent_id)

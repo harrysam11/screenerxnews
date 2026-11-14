@@ -41,6 +41,7 @@ class Settings(BaseSettings):
 
     # Strict Safety Constraints
     ALLOW_LIVE_TRADING: bool = False
+    LIVE_EXECUTION_AUTHORIZATION_TOKEN: str = "LIVE_AUTH_UNCONFIGURED"
     COLD_VAULT_ADDRESSES: List[str] = []
     BURNER_WALLET_ADDRESSES: List[str] = []
 

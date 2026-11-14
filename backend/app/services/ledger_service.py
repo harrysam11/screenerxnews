@@ -70,6 +70,11 @@ class DoubleEntryLedgerService:
                         posted_at TEXT NOT NULL
                     );
                 """)
+                # Non-destructive schema migration for pre-existing databases
+                journal_cols = {c[1] for c in conn.execute("PRAGMA table_info(ledger_journals);").fetchall()}
+                if "status" not in journal_cols:
+                    conn.execute("ALTER TABLE ledger_journals ADD COLUMN status TEXT NOT NULL DEFAULT 'DRAFT';")
+
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS ledger_lines (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -86,6 +91,17 @@ class DoubleEntryLedgerService:
                         CHECK (CAST(debit_amount_raw AS NUMERIC) >= 0 AND CAST(credit_amount_raw AS NUMERIC) >= 0)
                     );
                 """)
+                lines_cols = {c[1] for c in conn.execute("PRAGMA table_info(ledger_lines);").fetchall()}
+                if "debit_usd_units" not in lines_cols:
+                    conn.execute("ALTER TABLE ledger_lines ADD COLUMN debit_usd_units INTEGER NOT NULL DEFAULT 0;")
+                if "credit_usd_units" not in lines_cols:
+                    conn.execute("ALTER TABLE ledger_lines ADD COLUMN credit_usd_units INTEGER NOT NULL DEFAULT 0;")
+                # Drop obsolete legacy triggers if present from prior versions
+                conn.execute("DROP TRIGGER IF EXISTS trg_prevent_journal_update;")
+                conn.execute("DROP TRIGGER IF EXISTS trg_prevent_journal_delete;")
+                conn.execute("DROP TRIGGER IF EXISTS trg_prevent_line_update;")
+                conn.execute("DROP TRIGGER IF EXISTS trg_prevent_line_delete;")
+
                 # Database triggers enforcing invariants and immutability (LEDGER-01 through LEDGER-06)
                 # 1. Prevent direct insert of POSTED journal without lines
                 conn.execute("""
