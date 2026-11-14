@@ -2,7 +2,10 @@ import httpx
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 from decimal import Decimal
-from app.adapters.base import BaseChainAdapter, ChainBlockHeader, RawTransactionData
+from app.adapters.base import (
+    BaseChainAdapter, ChainBlockHeader, RawTransactionData,
+    ChainCapabilities, FinalityModel, RpcFailureException
+)
 
 class TronChainAdapter(BaseChainAdapter):
     """
@@ -15,6 +18,25 @@ class TronChainAdapter(BaseChainAdapter):
             rpc_urls=rpc_urls or ["https://api.trongrid.io"]
         )
 
+    def get_capabilities(self) -> ChainCapabilities:
+        return ChainCapabilities(
+            chain_id=self.chain_id,
+            name="TRON Mainnet",
+            group_tier="C",
+            network_type="tvm",
+            native_token="TRX",
+            native_decimals=6,
+            token_standards=["TRC-20"],
+            supports_token_2022=False,
+            supports_l2_fees=False,
+            supports_reorg_finality=True,
+            finality_model=FinalityModel.STATE_MACHINE_EPOCHS,
+            required_confirmations=19,
+            has_smart_contract_bytecode=True,
+            supports_events_log_bloom=False,
+            supports_simulation=False
+        )
+
     async def _call_api(self, endpoint: str, payload: Optional[dict] = None) -> Any:
         url = f"{self.rpc_urls[0].rstrip('/')}/{endpoint.lstrip('/')}"
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -25,31 +47,30 @@ class TronChainAdapter(BaseChainAdapter):
                     resp = await client.get(url)
                 if resp.status_code == 200:
                     return resp.json()
-            except Exception:
-                return None
-        return None
+                elif resp.status_code >= 400:
+                    raise RpcFailureException(self.chain_id, f"HTTP {resp.status_code} from TronGrid API")
+            except Exception as e:
+                if isinstance(e, RpcFailureException):
+                    raise
+                raise RpcFailureException(self.chain_id, f"TRON API error: {str(e)}") from e
+        raise RpcFailureException(self.chain_id, "No response from TRON API endpoint")
 
     async def get_latest_block(self) -> ChainBlockHeader:
         res = await self._call_api("/wallet/getnowblock")
-        if res and "block_header" in res:
-            raw_data = res["block_header"].get("raw_data", {})
-            block_number = int(raw_data.get("number", 0))
-            block_hash = res.get("blockID", "0x0")
-            parent_hash = raw_data.get("parentHash", "0x0")
-            ts = int(raw_data.get("timestamp", 0)) / 1000.0
-            return ChainBlockHeader(
-                chain_id=self.chain_id,
-                block_number=block_number,
-                block_hash=block_hash,
-                parent_hash=parent_hash,
-                block_time=datetime.fromtimestamp(ts, timezone.utc) if ts > 0 else datetime.now(timezone.utc)
-            )
+        if not res or "block_header" not in res:
+            raise RpcFailureException(self.chain_id, "Failed to retrieve current block from TRON node")
+        
+        raw_data = res["block_header"].get("raw_data", {})
+        block_number = int(raw_data.get("number", 0))
+        block_hash = res.get("blockID", "0x0")
+        parent_hash = raw_data.get("parentHash", "0x0")
+        ts = int(raw_data.get("timestamp", 0)) / 1000.0
         return ChainBlockHeader(
             chain_id=self.chain_id,
-            block_number=0,
-            block_hash="0x0",
-            parent_hash="0x0",
-            block_time=datetime.now(timezone.utc)
+            block_number=block_number,
+            block_hash=block_hash,
+            parent_hash=parent_hash,
+            block_time=datetime.fromtimestamp(ts, timezone.utc) if ts > 0 else datetime.now(timezone.utc)
         )
 
     def evaluate_trc20_security(

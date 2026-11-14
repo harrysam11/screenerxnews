@@ -2,7 +2,10 @@ import httpx
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 from decimal import Decimal
-from app.adapters.base import BaseChainAdapter, ChainBlockHeader, RawTransactionData
+from app.adapters.base import (
+    BaseChainAdapter, ChainBlockHeader, RawTransactionData,
+    ChainCapabilities, FinalityModel, RpcFailureException
+)
 
 class TonChainAdapter(BaseChainAdapter):
     """
@@ -18,6 +21,25 @@ class TonChainAdapter(BaseChainAdapter):
             rpc_urls=rpc_urls or ["https://toncenter.com/api/v2/jsonRPC"]
         )
 
+    def get_capabilities(self) -> ChainCapabilities:
+        return ChainCapabilities(
+            chain_id=self.chain_id,
+            name="The Open Network",
+            group_tier="C",
+            network_type="tvm",
+            native_token="TON",
+            native_decimals=9,
+            token_standards=["Jetton"],
+            supports_token_2022=False,
+            supports_l2_fees=False,
+            supports_reorg_finality=False,
+            finality_model=FinalityModel.STATE_MACHINE_EPOCHS,
+            required_confirmations=1,
+            has_smart_contract_bytecode=True,
+            supports_events_log_bloom=False,
+            supports_simulation=False
+        )
+
     async def _call_rpc(self, method: str, params: dict) -> Any:
         url = self.rpc_urls[0]
         payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
@@ -25,15 +47,24 @@ class TonChainAdapter(BaseChainAdapter):
             try:
                 resp = await client.post(url, json=payload)
                 if resp.status_code == 200:
-                    return resp.json().get("result")
-            except Exception:
-                return None
-        return None
+                    data = resp.json()
+                    if not data.get("ok", True):
+                        raise RpcFailureException(self.chain_id, f"TON RPC error: {data.get('error')}")
+                    return data.get("result")
+                elif resp.status_code >= 400:
+                    raise RpcFailureException(self.chain_id, f"HTTP {resp.status_code} from TON RPC")
+            except Exception as e:
+                if isinstance(e, RpcFailureException):
+                    raise
+                raise RpcFailureException(self.chain_id, f"Connection error: {str(e)}") from e
+        raise RpcFailureException(self.chain_id, "No response from TON RPC endpoint")
 
     async def get_latest_block(self) -> ChainBlockHeader:
         res = await self._call_rpc("getMasterchainInfo", {})
-        seq_no = int(res.get("last", {}).get("seqno", 0)) if res else 0
-        root_hash = res.get("last", {}).get("root_hash", "0x0") if res else "0x0"
+        if not res or "last" not in res:
+            raise RpcFailureException(self.chain_id, "getMasterchainInfo failed to return masterchain state")
+        seq_no = int(res.get("last", {}).get("seqno", 0))
+        root_hash = res.get("last", {}).get("root_hash", "0x0")
         return ChainBlockHeader(
             chain_id=self.chain_id,
             block_number=seq_no,
@@ -75,19 +106,19 @@ class TonChainAdapter(BaseChainAdapter):
         }
 
     async def inspect_token_security(self, jetton_master_address: str) -> Dict[str, Any]:
-        # Probe via runGetMethod
-        res = await self._call_rpc("runGetMethod", {
-            "address": jetton_master_address,
-            "method": "get_jetton_data",
-            "stack": []
-        })
-        if res and res.get("exit_code") == 0:
-            stack = res.get("stack", [])
-            # Typical stack: [ [num, total_supply], [num, mintable], [cell/slice, admin], ... ]
-            total_supply = int(stack[0][1], 16) if len(stack) > 0 and isinstance(stack[0][1], str) else 0
-            mintable = int(stack[1][1], 16) if len(stack) > 1 and isinstance(stack[1][1], str) else -1
-            return self.evaluate_jetton_data(total_supply, mintable, None)
-            
+        try:
+            res = await self._call_rpc("runGetMethod", {
+                "address": jetton_master_address,
+                "method": "get_jetton_data",
+                "stack": []
+            })
+            if res and res.get("exit_code") == 0:
+                stack = res.get("stack", [])
+                total_supply = int(stack[0][1], 16) if len(stack) > 0 and isinstance(stack[0][1], str) else 0
+                mintable = int(stack[1][1], 16) if len(stack) > 1 and isinstance(stack[1][1], str) else -1
+                return self.evaluate_jetton_data(total_supply, mintable, None)
+        except Exception:
+            pass
         return self.evaluate_jetton_data(0, -1, None)
 
     async def get_initial_buyer_transactions(

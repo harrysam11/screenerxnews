@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 from pydantic import BaseModel
 
@@ -197,4 +197,50 @@ class ChainRegistry:
     def list_active_chains(self) -> List[ChainConfig]:
         return list(self._chains.values())
 
+    def get_chain_capabilities(self, chain_id: str):
+        from app.adapters import get_adapter_for_chain
+        adapter = get_adapter_for_chain(chain_id)
+        return adapter.get_capabilities()
+
+    def validate_all_chains(self) -> Dict[str, Any]:
+        """
+        Validates the integrity of all registered chains (CHAIN-01).
+        Verifies CAIP-2 compliance, RPC URLs, native assets, and adapter capabilities.
+        """
+        from app.adapters import get_adapter_for_chain
+        validation_errors = []
+        validated_chains = []
+
+        for cid, config in self._chains.items():
+            # Check CAIP-2 format
+            if ":" not in cid or len(cid.split(":")) != 2:
+                validation_errors.append(f"Chain {cid} violates CAIP-2 namespace:reference syntax")
+                continue
+
+            if not config.rpc_urls:
+                validation_errors.append(f"Chain {cid} has empty RPC URL list")
+
+            if not config.native_asset_symbol or config.native_asset_decimals <= 0:
+                validation_errors.append(f"Chain {cid} has invalid native asset definition")
+
+            # Check adapter resolution and capability contract
+            try:
+                adapter = get_adapter_for_chain(cid)
+                caps = adapter.get_capabilities()
+                if caps.chain_id != cid:
+                    validation_errors.append(f"Chain {cid} adapter returned mismatched capabilities chain_id: {caps.chain_id}")
+            except Exception as e:
+                validation_errors.append(f"Chain {cid} failed adapter resolution: {str(e)}")
+                continue
+
+            validated_chains.append(cid)
+
+        return {
+            "valid": len(validation_errors) == 0,
+            "total_chains": len(self._chains),
+            "validated_chains": validated_chains,
+            "errors": validation_errors
+        }
+
 chain_registry = ChainRegistry()
+

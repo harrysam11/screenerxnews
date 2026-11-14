@@ -1,5 +1,7 @@
-from typing import Optional
-from app.adapters.base import BaseChainAdapter, ChainBlockHeader, RawTransactionData
+from app.adapters.base import (
+    BaseChainAdapter, ChainBlockHeader, RawTransactionData,
+    ChainCapabilities, FinalityModel, RpcFailureException
+)
 from app.adapters.solana import SolanaChainAdapter
 from app.adapters.evm import EvmChainAdapter
 from app.adapters.evm_l2 import (
@@ -44,6 +46,9 @@ __all__ = [
     "BaseChainAdapter",
     "ChainBlockHeader",
     "RawTransactionData",
+    "ChainCapabilities",
+    "FinalityModel",
+    "RpcFailureException",
     "SolanaChainAdapter",
     "EvmChainAdapter",
     "ArbitrumChainAdapter",
