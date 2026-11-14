@@ -28,6 +28,10 @@ def test_symmetrical_paper_sell_order():
     AUD-04: Test that paper order supports SELL side where input_amount_raw 
     is denominated in raw meme token units and output is SOL.
     """
+    from app.services.paper_simulation_engine import paper_simulation_engine
+    with paper_simulation_engine._get_connection() as conn:
+        conn.execute("DELETE FROM paper_orders WHERE client_order_id = 'client-sell-test-001';")
+
     order_payload = {
         "account_id": "00000000-0000-0000-0000-000000000001",
         "client_order_id": "client-sell-test-001",

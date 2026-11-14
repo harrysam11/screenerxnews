@@ -222,6 +222,8 @@ class PaperAccountResponse(BaseModel):
     unrealized_pnl_native: Optional[Decimal] = None
     win_rate: Decimal
     profit_factor: Decimal
+    winning_trades: Optional[int] = 0
+    losing_trades: Optional[int] = 0
 
 class IntentState(str, Enum):
     CREATED = "CREATED"

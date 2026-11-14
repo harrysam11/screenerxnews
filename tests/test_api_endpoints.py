@@ -75,6 +75,10 @@ def test_paper_desk_endpoints():
     assert "total_equity_lamports" in acc
 
     # 2. Place paper order (symmetrical)
+    from app.services.paper_simulation_engine import paper_simulation_engine
+    with paper_simulation_engine._get_connection() as conn:
+        conn.execute("DELETE FROM paper_orders WHERE client_order_id = 'client-ord-12345';")
+
     order_payload = {
         "account_id": "00000000-0000-0000-0000-000000000001",
         "client_order_id": "client-ord-12345",
