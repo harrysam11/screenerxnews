@@ -238,41 +238,68 @@ class ExecutionIntentStore:
                         detail="SECURITY VIOLATION (EXEC-04): Trade intent has expired. Re-approval rejected."
                     )
 
-                # 4. EXEC-03: Transaction message hash mismatch
-                if transaction_message_hash != intent["transaction_message_hash"]:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="SECURITY VIOLATION (EXEC-03): Transaction message hash does not match canonical intent digest."
-                    )
-
-                # 5. Cold Vault Hard Reject
+                # 4. Cold Vault Hard Reject
                 if signed_by_address in settings.COLD_VAULT_ADDRESSES:
                     raise HTTPException(
                         status_code=403,
                         detail="SECURITY VIOLATION: Cold vault signatures are permanently forbidden."
                     )
 
-                # 6. EXEC-02: Signer must match originally authorized wallet
+                # 5. EXEC-02: Signer must match originally authorized wallet
                 if signed_by_address != intent["wallet_address"]:
                     raise HTTPException(
                         status_code=403,
                         detail="SECURITY VIOLATION (EXEC-02): Signer address does not match the authorized wallet."
                     )
 
-                # 7. Burner Wallet Whitelist Verification
+                # 6. Burner Wallet Whitelist Verification
                 if settings.BURNER_WALLET_ADDRESSES and signed_by_address not in settings.BURNER_WALLET_ADDRESSES:
                     raise HTTPException(
                         status_code=403,
                         detail="SECURITY VIOLATION: Signer is not an authorized burner wallet address."
                     )
 
-                # 8. Cryptographic Signature Verification (MANDATORY)
+                # 7. Cryptographic Signature Verification (MANDATORY presence check)
                 if not signature_hex or not signature_hex.strip():
                     raise HTTPException(
                         status_code=403,
                         detail="SECURITY VIOLATION (EXEC-02): Cryptographic signature is mandatory for intent approval."
                     )
 
+                # 8. Independent Canonical Message Reconstruction (EXEC-03 / P10.2-A.2)
+                reconstructed_msg = build_canonical_intent_message(
+                    intent_id=intent["intent_id"],
+                    chain_id=intent["chain_id"],
+                    wallet_address=intent["wallet_address"],
+                    input_mint=intent["input_mint"],
+                    output_mint=intent["output_mint"],
+                    input_amount_raw=intent["input_amount_raw"],
+                    max_slippage_bps=intent["max_slippage_bps"],
+                    destination_router=intent["destination_router"],
+                    asset_id=intent["asset_id"],
+                    pool_id=intent["pool_id"],
+                    side=intent["side"],
+                    strategy_id=intent["strategy_id"],
+                    strategy_version=intent["strategy_version"],
+                    nonce=intent["nonce"],
+                    expires_at=intent["expires_at"]
+                )
+                recomputed_digest = compute_intent_digest(reconstructed_msg)
+
+                if recomputed_digest != intent["canonical_intent_digest"]:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="SECURITY VIOLATION: Stored intent digest does not match reconstructed canonical intent fields."
+                    )
+
+                expected_tx_hash = hashlib.sha256(recomputed_digest.encode("utf-8")).hexdigest()
+                if transaction_message_hash != expected_tx_hash or transaction_message_hash != intent["transaction_message_hash"]:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="SECURITY VIOLATION (EXEC-03): Transaction message hash does not match canonical intent digest."
+                    )
+
+                # 9. Cryptographic Signature Verification
                 clean_sig = signature_hex.strip()
                 if clean_sig.startswith("0x"):
                     clean_sig = clean_sig[2:]
@@ -285,7 +312,7 @@ class ExecutionIntentStore:
                         detail="SECURITY VIOLATION: Invalid hexadecimal signature encoding."
                     )
 
-                msg_bytes = intent["canonical_intent_digest"].encode("utf-8")
+                msg_bytes = recomputed_digest.encode("utf-8")
                 is_valid = self._verifier.verify(
                     chain_id=intent["chain_id"],
                     signer_address=signed_by_address,

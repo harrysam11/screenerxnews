@@ -78,6 +78,9 @@ class DoubleEntryLedgerService:
                         debit_amount_raw TEXT NOT NULL,
                         credit_amount_raw TEXT NOT NULL,
                         usd_rate TEXT NOT NULL,
+                        debit_usd_units INTEGER NOT NULL DEFAULT 0,
+                        credit_usd_units INTEGER NOT NULL DEFAULT 0,
+                        CHECK (debit_usd_units >= 0 AND credit_usd_units >= 0),
                         CHECK (CAST(debit_amount_raw AS NUMERIC) >= 0 AND CAST(credit_amount_raw AS NUMERIC) >= 0)
                     );
                 """)
@@ -91,25 +94,50 @@ class DoubleEntryLedgerService:
                         SELECT RAISE(ABORT, 'FINANCIAL INTEGRITY VIOLATION (LEDGER-03): Direct INSERT with status=POSTED forbidden. Journals must be created in DRAFT.');
                     END;
                 """)
-                # 2. On status transition to POSTED, verify lines >= 2 and balance == 0 at the DB level
+                # 2. Status transition MUST be strictly DRAFT -> POSTED. Status rollback or invalid transitions are aborted.
+                conn.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_enforce_valid_status_transition
+                    BEFORE UPDATE OF status ON ledger_journals
+                    WHEN NOT (OLD.status = 'DRAFT' AND NEW.status = 'POSTED')
+                    BEGIN
+                        SELECT RAISE(ABORT, 'FINANCIAL INTEGRITY VIOLATION: Status rollback or invalid transition forbidden. State POSTED is irreversible.');
+                    END;
+                """)
+                # 3. On status transition to POSTED, verify lines >= 2 and exact integer balance (debit_usd_units == credit_usd_units)
                 conn.execute("""
                     CREATE TRIGGER IF NOT EXISTS trg_check_journal_post_invariants
                     BEFORE UPDATE OF status ON ledger_journals
-                    WHEN NEW.status = 'POSTED' AND OLD.status != 'POSTED'
+                    WHEN NEW.status = 'POSTED' AND OLD.status = 'DRAFT'
                     BEGIN
                         SELECT RAISE(ABORT, 'FINANCIAL INTEGRITY VIOLATION (LEDGER-03): Journal has fewer than 2 lines.')
                         WHERE (SELECT COUNT(*) FROM ledger_lines WHERE journal_id = NEW.id) < 2;
 
-                        SELECT RAISE(ABORT, 'FINANCIAL INTEGRITY VIOLATION (LEDGER-01): Journal debits and credits do not balance.')
+                        SELECT RAISE(ABORT, 'FINANCIAL INTEGRITY VIOLATION (LEDGER-01): Journal debits and credits do not balance in exact integer units.')
                         WHERE (
-                            SELECT ROUND(ABS(COALESCE(SUM(
-                                (CAST(debit_amount_raw AS REAL) - CAST(credit_amount_raw AS REAL)) * CAST(usd_rate AS REAL)
-                            ), 0)), 6)
+                            SELECT COALESCE(SUM(debit_usd_units - credit_usd_units), 0)
                             FROM ledger_lines WHERE journal_id = NEW.id
-                        ) > 0.000001;
+                        ) != 0;
                     END;
                 """)
-                # 3. Prevent inserting lines into already POSTED journals
+                # 4. Once a journal is POSTED, ANY update whatsoever is permanently blocked!
+                conn.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_prevent_posted_journal_update
+                    BEFORE UPDATE ON ledger_journals
+                    WHEN OLD.status = 'POSTED'
+                    BEGIN
+                        SELECT RAISE(ABORT, 'FINANCIAL INTEGRITY VIOLATION (LEDGER-05): Posted ledger journals cannot be modified or reverted.');
+                    END;
+                """)
+                # 5. Prevent deleting POSTED journals
+                conn.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_prevent_posted_journal_delete
+                    BEFORE DELETE ON ledger_journals
+                    WHEN OLD.status = 'POSTED'
+                    BEGIN
+                        SELECT RAISE(ABORT, 'FINANCIAL INTEGRITY VIOLATION (LEDGER-06): Posted ledger journals cannot be deleted.');
+                    END;
+                """)
+                # 6. Prevent inserting lines into already POSTED journals
                 conn.execute("""
                     CREATE TRIGGER IF NOT EXISTS trg_prevent_line_insert_on_posted
                     BEFORE INSERT ON ledger_lines
@@ -118,22 +146,7 @@ class DoubleEntryLedgerService:
                         WHERE (SELECT status FROM ledger_journals WHERE id = NEW.journal_id) = 'POSTED';
                     END;
                 """)
-                # 4. Immutability triggers
-                conn.execute("""
-                    CREATE TRIGGER IF NOT EXISTS trg_prevent_journal_update
-                    BEFORE UPDATE OF transaction_signature, order_id, idempotency_key, journal_type, description ON ledger_journals
-                    WHEN OLD.status = 'POSTED'
-                    BEGIN
-                        SELECT RAISE(ABORT, 'FINANCIAL INTEGRITY VIOLATION (LEDGER-05): Posted ledger journals cannot be modified.');
-                    END;
-                """)
-                conn.execute("""
-                    CREATE TRIGGER IF NOT EXISTS trg_prevent_journal_delete
-                    BEFORE DELETE ON ledger_journals
-                    BEGIN
-                        SELECT RAISE(ABORT, 'FINANCIAL INTEGRITY VIOLATION (LEDGER-06): Posted ledger journals cannot be deleted.');
-                    END;
-                """)
+                # 7. Line immutability: lines can never be updated or deleted
                 conn.execute("""
                     CREATE TRIGGER IF NOT EXISTS trg_prevent_line_update
                     BEFORE UPDATE ON ledger_lines
@@ -197,13 +210,16 @@ class DoubleEntryLedgerService:
             total_debits_usd += debit * usd_rate
             total_credits_usd += credit * usd_rate
 
+            usd_units_scale = Decimal("100000000")
             parsed_lines.append({
                 "account_code": account,
                 "wallet_address": line["wallet_address"],
                 "mint_address": line["mint_address"],
                 "debit_amount_raw": str(debit),
                 "credit_amount_raw": str(credit),
-                "usd_rate": str(usd_rate)
+                "usd_rate": str(usd_rate),
+                "debit_usd_units": int(debit * usd_rate * usd_units_scale),
+                "credit_usd_units": int(credit * usd_rate * usd_units_scale)
             })
 
         if total_debits_usd != total_credits_usd:
@@ -236,14 +252,17 @@ class DoubleEntryLedgerService:
                 for pl in parsed_lines:
                     conn.execute("""
                         INSERT INTO ledger_lines (
-                            journal_id, account_code, wallet_address, mint_address, debit_amount_raw, credit_amount_raw, usd_rate
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                            journal_id, account_code, wallet_address, mint_address,
+                            debit_amount_raw, credit_amount_raw, usd_rate,
+                            debit_usd_units, credit_usd_units
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         journal_id, pl["account_code"], pl["wallet_address"], pl["mint_address"],
-                        pl["debit_amount_raw"], pl["credit_amount_raw"], pl["usd_rate"]
+                        pl["debit_amount_raw"], pl["credit_amount_raw"], pl["usd_rate"],
+                        pl["debit_usd_units"], pl["credit_usd_units"]
                     ))
 
-                # Database trigger fires on UPDATE to POSTED: verifies lines >= 2 and balance == 0
+                # Database trigger fires on UPDATE to POSTED: verifies lines >= 2 and exact integer balance == 0
                 conn.execute("""
                     UPDATE ledger_journals
                     SET status = 'POSTED'

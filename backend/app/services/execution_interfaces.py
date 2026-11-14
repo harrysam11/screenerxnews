@@ -177,23 +177,38 @@ def _point_mul(k: int, p: Optional[tuple]) -> Optional[tuple]:
 _SECP_G = (_SECP_GX, _SECP_GY)
 
 def ec_recover_evm_address(msghash: bytes, r: int, s: int, v: int) -> Optional[str]:
-    """Recovers the Ethereum/EVM 0x checksum/lowercase address from (r, s, v) and message hash."""
-    if r <= 0 or r >= _SECP_N or s <= 0 or s >= _SECP_N:
+    """
+    Recovers Ethereum 0x address from (r, s, v) and message hash according to SEC 1 and EIP-2.
+    - Strict EIP-2 low-s malleability protection (s <= N // 2).
+    - Full recovery ID support (recid 0, 1, 2, 3) including x = r + n coordinate.
+    """
+    if not (1 <= r < _SECP_N):
         return None
-    # Standard EVM recovery ID normalization: v can be 27, 28, or 0, 1, or EIP-155
+    # EIP-2 low-s malleability constraint
+    if not (1 <= s <= _SECP_N // 2):
+        return None
+
+    # Normalize recovery ID (v): 27/28 (standard), 0/1 (raw), or EIP-155 (v >= 35)
     if v >= 35:
         recid = (v - 35) % 2
     elif v >= 27:
         recid = v - 27
     else:
         recid = v
-    recid = recid & 1
 
-    x = r
+    if recid not in (0, 1, 2, 3):
+        return None
+
+    # Handle the second possible recovery-point x-coordinate: r + n
+    x = r + _SECP_N if (recid & 2) != 0 else r
+    if x >= _SECP_P:
+        return None
+
     y_sq = (pow(x, 3, _SECP_P) + _SECP_B) % _SECP_P
     y = pow(y_sq, (_SECP_P + 1) // 4, _SECP_P)
-    if (y % 2) != recid:
+    if (y % 2) != (recid & 1):
         y = _SECP_P - y
+
     R = (x, y)
     sR = _point_mul(s, R)
     z = int.from_bytes(msghash, 'big')
@@ -214,7 +229,9 @@ def ec_recover_evm_address(msghash: bytes, r: int, s: int, v: int) -> Optional[s
 class ChainSignatureVerifier(SignatureVerifier):
     """
     Cryptographic signature verification for Solana (Ed25519) and EVM (Secp256k1).
-    Validates cryptographic authenticity without trusting caller-supplied claims.
+    Validates cryptographic authenticity against single, unambiguous specifications:
+    - Solana: Ed25519 signature over exact canonical message bytes.
+    - EVM: EIP-191 Personal Sign prefix and Keccak-256 digest over exact canonical message bytes.
     """
     def verify(self, chain_id: str, signer_address: str, message_bytes: bytes, signature_bytes: bytes) -> bool:
         if not signer_address or not message_bytes or not signature_bytes:
@@ -224,6 +241,8 @@ class ChainSignatureVerifier(SignatureVerifier):
             try:
                 import nacl.signing
                 import nacl.exceptions
+                if len(signature_bytes) != 64:
+                    return False
                 pubkey_bytes = b58decode(signer_address)
                 if len(pubkey_bytes) != 32:
                     return False
@@ -235,33 +254,19 @@ class ChainSignatureVerifier(SignatureVerifier):
 
         elif chain_id.startswith("eip155:"):
             try:
-                if len(signature_bytes) not in (64, 65):
+                if len(signature_bytes) != 65:
                     return False
                 r = int.from_bytes(signature_bytes[0:32], 'big')
                 s = int.from_bytes(signature_bytes[32:64], 'big')
-                v_candidates = [signature_bytes[64]] if len(signature_bytes) == 65 else [27, 28]
+                v = signature_bytes[64]
 
-                # Hash candidates:
-                # 1. Raw message if 32 bytes
-                # 2. Keccak-256 of message
-                # 3. EIP-191 personal_sign format
-                # 4. SHA-256 of message (canonical digest)
-                import hashlib
-                hash_candidates = []
-                if len(message_bytes) == 32:
-                    hash_candidates.append(message_bytes)
-                hash_candidates.append(keccak256(message_bytes))
+                # Explicit, unambiguous signing protocol: EIP-191 Personal Sign
                 eip191_prefix = f"\x19Ethereum Signed Message:\n{len(message_bytes)}".encode('utf-8')
-                hash_candidates.append(keccak256(eip191_prefix + message_bytes))
-                hash_candidates.append(hashlib.sha256(message_bytes).digest())
+                msghash = keccak256(eip191_prefix + message_bytes)
 
+                recovered = ec_recover_evm_address(msghash, r, s, v)
                 target_addr = signer_address.lower().strip()
-                for msghash in hash_candidates:
-                    for v in v_candidates:
-                        recovered = ec_recover_evm_address(msghash, r, s, v)
-                        if recovered and recovered.lower() == target_addr:
-                            return True
-                return False
+                return recovered is not None and recovered.lower() == target_addr
             except Exception:
                 return False
 

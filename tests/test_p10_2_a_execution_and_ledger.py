@@ -6,6 +6,7 @@ import sqlite3
 import tempfile
 import threading
 import random
+import hashlib
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 from datetime import datetime, timezone, timedelta
@@ -64,14 +65,22 @@ def create_evm_keypair():
     return priv, addr
 
 def sign_evm_message(priv: int, msg_bytes: bytes) -> str:
-    import hashlib
-    msghash = hashlib.sha256(msg_bytes).digest()
+    # Deterministic EIP-191 personal_sign format
+    eip191_prefix = f"\x19Ethereum Signed Message:\n{len(msg_bytes)}".encode("utf-8")
+    msghash = keccak256(eip191_prefix + msg_bytes)
     z = int.from_bytes(msghash, 'big')
     k = random.randint(1, _SECP_N - 1)
     R = _point_mul(k, _SECP_G)
     r = R[0] % _SECP_N
     s = (_inv(k, _SECP_N) * (z + r * priv)) % _SECP_N
-    v = 27 + (0 if R[1] % 2 == 0 else 1)
+    recid = 1 if R[1] % 2 != 0 else 0
+    if R[0] >= _SECP_N:
+        recid += 2
+    # EIP-2 low-s malleability protection
+    if s > _SECP_N // 2:
+        s = _SECP_N - s
+        recid ^= 1
+    v = 27 + recid
     sig_bytes = r.to_bytes(32, 'big') + s.to_bytes(32, 'big') + bytes([v])
     return sig_bytes.hex()
 
@@ -137,15 +146,43 @@ def test_exec_02_signer_address_must_match_wallet_address(clean_intent_store):
     sk_auth, authorized_wallet = create_solana_keypair()
     sk_att, attacker_wallet = create_solana_keypair()
 
+    canonical_msg = build_canonical_intent_message(
+        intent_id=intent_id,
+        chain_id="solana:mainnet",
+        wallet_address=authorized_wallet,
+        input_mint="So11111111111111111111111111111111111111112",
+        output_mint="Token1111111111111111111111111111111111111",
+        input_amount_raw="100000000",
+        max_slippage_bps=150,
+        destination_router="default",
+        asset_id="",
+        pool_id="",
+        side="BUY",
+        strategy_id="direct",
+        strategy_version="1.0",
+        nonce="nonce-1",
+        expires_at=(now + timedelta(minutes=2)).isoformat()
+    )
+    digest = compute_intent_digest(canonical_msg)
+    tx_hash = hashlib.sha256(digest.encode("utf-8")).hexdigest()
+
     intent_record = {
         "intent_id": intent_id,
         "chain_id": "solana:mainnet",
         "wallet_address": authorized_wallet,
+        "asset_id": "",
+        "pool_id": "",
+        "side": "BUY",
         "input_mint": "So11111111111111111111111111111111111111112",
         "output_mint": "Token1111111111111111111111111111111111111",
         "input_amount_raw": Decimal("100000000"),
-        "canonical_intent_digest": "valid_digest_123",
-        "transaction_message_hash": "valid_hash_123",
+        "max_slippage_bps": 150,
+        "destination_router": "default",
+        "strategy_id": "direct",
+        "strategy_version": "1.0",
+        "nonce": "nonce-1",
+        "canonical_intent_digest": digest,
+        "transaction_message_hash": tx_hash,
         "status": IntentLifecycleState.AWAITING_APPROVAL,
         "policy_checks_passed": True,
         "created_at": now,
@@ -154,13 +191,13 @@ def test_exec_02_signer_address_must_match_wallet_address(clean_intent_store):
     }
     clean_intent_store.save_intent(intent_record)
 
-    attacker_sig = sign_solana_message(sk_att, b"valid_digest_123")
+    attacker_sig = sign_solana_message(sk_att, digest.encode("utf-8"))
 
     with pytest.raises(Exception) as exc_info:
         clean_intent_store.atomic_approve_intent(
             intent_id=intent_id,
             signed_by_address=attacker_wallet,
-            transaction_message_hash="valid_hash_123",
+            transaction_message_hash=tx_hash,
             signature_hex=attacker_sig
         )
     assert exc_info.value.status_code == 403
@@ -176,15 +213,43 @@ def test_exec_02_mandatory_signature_enforcement(clean_intent_store):
     intent_id = str(uuid.uuid4())
     sk, wallet = create_solana_keypair()
 
+    canonical_msg = build_canonical_intent_message(
+        intent_id=intent_id,
+        chain_id="solana:mainnet",
+        wallet_address=wallet,
+        input_mint="So11111111111111111111111111111111111111112",
+        output_mint="Token1111111111111111111111111111111111111",
+        input_amount_raw="100000000",
+        max_slippage_bps=150,
+        destination_router="default",
+        asset_id="",
+        pool_id="",
+        side="BUY",
+        strategy_id="direct",
+        strategy_version="1.0",
+        nonce="nonce-mand",
+        expires_at=(now + timedelta(minutes=2)).isoformat()
+    )
+    digest = compute_intent_digest(canonical_msg)
+    tx_hash = hashlib.sha256(digest.encode("utf-8")).hexdigest()
+
     intent_record = {
         "intent_id": intent_id,
         "chain_id": "solana:mainnet",
         "wallet_address": wallet,
+        "asset_id": "",
+        "pool_id": "",
+        "side": "BUY",
         "input_mint": "So11111111111111111111111111111111111111112",
         "output_mint": "Token1111111111111111111111111111111111111",
         "input_amount_raw": Decimal("100000000"),
-        "canonical_intent_digest": "valid_digest_mandatory",
-        "transaction_message_hash": "valid_hash_mandatory",
+        "max_slippage_bps": 150,
+        "destination_router": "default",
+        "strategy_id": "direct",
+        "strategy_version": "1.0",
+        "nonce": "nonce-mand",
+        "canonical_intent_digest": digest,
+        "transaction_message_hash": tx_hash,
         "status": IntentLifecycleState.AWAITING_APPROVAL,
         "policy_checks_passed": True,
         "created_at": now,
@@ -198,7 +263,7 @@ def test_exec_02_mandatory_signature_enforcement(clean_intent_store):
         clean_intent_store.atomic_approve_intent(
             intent_id=intent_id,
             signed_by_address=wallet,
-            transaction_message_hash="valid_hash_mandatory",
+            transaction_message_hash=tx_hash,
             signature_hex=None
         )
     assert exc_info_none.value.status_code == 403
@@ -209,7 +274,7 @@ def test_exec_02_mandatory_signature_enforcement(clean_intent_store):
         clean_intent_store.atomic_approve_intent(
             intent_id=intent_id,
             signed_by_address=wallet,
-            transaction_message_hash="valid_hash_mandatory",
+            transaction_message_hash=tx_hash,
             signature_hex="   "
         )
     assert exc_info_empty.value.status_code == 403
@@ -224,15 +289,43 @@ def test_exec_03_transaction_message_digest_verification(clean_intent_store):
     intent_id = str(uuid.uuid4())
     sk, wallet = create_solana_keypair()
 
+    canonical_msg = build_canonical_intent_message(
+        intent_id=intent_id,
+        chain_id="solana:mainnet",
+        wallet_address=wallet,
+        input_mint="So11111111111111111111111111111111111111112",
+        output_mint="Token1111111111111111111111111111111111111",
+        input_amount_raw="100000000",
+        max_slippage_bps=150,
+        destination_router="default",
+        asset_id="",
+        pool_id="",
+        side="BUY",
+        strategy_id="direct",
+        strategy_version="1.0",
+        nonce="nonce-hash",
+        expires_at=(now + timedelta(minutes=2)).isoformat()
+    )
+    digest = compute_intent_digest(canonical_msg)
+    tx_hash = hashlib.sha256(digest.encode("utf-8")).hexdigest()
+
     intent_record = {
         "intent_id": intent_id,
         "chain_id": "solana:mainnet",
         "wallet_address": wallet,
+        "asset_id": "",
+        "pool_id": "",
+        "side": "BUY",
         "input_mint": "So11111111111111111111111111111111111111112",
         "output_mint": "Token1111111111111111111111111111111111111",
         "input_amount_raw": Decimal("100000000"),
-        "canonical_intent_digest": "expected_digest",
-        "transaction_message_hash": "expected_hash_original",
+        "max_slippage_bps": 150,
+        "destination_router": "default",
+        "strategy_id": "direct",
+        "strategy_version": "1.0",
+        "nonce": "nonce-hash",
+        "canonical_intent_digest": digest,
+        "transaction_message_hash": tx_hash,
         "status": IntentLifecycleState.AWAITING_APPROVAL,
         "policy_checks_passed": True,
         "created_at": now,
@@ -241,7 +334,7 @@ def test_exec_03_transaction_message_digest_verification(clean_intent_store):
     }
     clean_intent_store.save_intent(intent_record)
 
-    sig = sign_solana_message(sk, b"expected_digest")
+    sig = sign_solana_message(sk, digest.encode("utf-8"))
 
     with pytest.raises(Exception) as exc_info:
         clean_intent_store.atomic_approve_intent(
@@ -256,27 +349,53 @@ def test_exec_03_transaction_message_digest_verification(clean_intent_store):
 
 def test_exec_03_evm_secp256k1_signature_verification(clean_intent_store):
     """
-    EXEC-03 / P10.2-A.1: Genuine EVM Secp256k1 address recovery and signature verification.
-    Validates that:
-    1. A valid Secp256k1 signature from the intent wallet approves the intent.
-    2. A signature from a different EVM address is rejected.
-    3. A corrupt or forged signature is rejected.
+    EXEC-03 / P10.2-A.2:
+    Genuine EVM Secp256k1 recovery against single explicit EIP-191 personal_sign specification:
+    1. Valid Secp256k1 signature from intent wallet approves the intent.
+    2. Signature from a different EVM address is rejected.
+    3. Standard established Ethereum test vector verified.
+    4. Malleable high-s signature is rejected (s > N // 2).
     """
     now = datetime.now(timezone.utc)
     intent_id = str(uuid.uuid4())
     priv_auth, auth_evm_addr = create_evm_keypair()
     priv_other, other_evm_addr = create_evm_keypair()
 
-    canonical_digest = "evm_canonical_digest_test_12345"
-    tx_hash = "evm_tx_hash_12345"
+    canonical_msg = build_canonical_intent_message(
+        intent_id=intent_id,
+        chain_id="eip155:1",
+        wallet_address=auth_evm_addr,
+        input_mint="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        output_mint="0x6982508145454Ce325dDbE47a25d4ec3d2311933",
+        input_amount_raw="1000000000000000000",
+        max_slippage_bps=150,
+        destination_router="uniswap_v3",
+        asset_id="asset-eth",
+        pool_id="pool-eth",
+        side="BUY",
+        strategy_id="direct",
+        strategy_version="1.0",
+        nonce="nonce-evm-1",
+        expires_at=(now + timedelta(minutes=2)).isoformat()
+    )
+    canonical_digest = compute_intent_digest(canonical_msg)
+    tx_hash = hashlib.sha256(canonical_digest.encode("utf-8")).hexdigest()
 
     intent_record = {
         "intent_id": intent_id,
         "chain_id": "eip155:1",
         "wallet_address": auth_evm_addr,
+        "asset_id": "asset-eth",
+        "pool_id": "pool-eth",
+        "side": "BUY",
         "input_mint": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
         "output_mint": "0x6982508145454Ce325dDbE47a25d4ec3d2311933",
         "input_amount_raw": Decimal("1000000000000000000"),
+        "max_slippage_bps": 150,
+        "destination_router": "uniswap_v3",
+        "strategy_id": "direct",
+        "strategy_version": "1.0",
+        "nonce": "nonce-evm-1",
         "canonical_intent_digest": canonical_digest,
         "transaction_message_hash": tx_hash,
         "status": IntentLifecycleState.AWAITING_APPROVAL,
@@ -298,30 +417,69 @@ def test_exec_03_evm_secp256k1_signature_verification(clean_intent_store):
     assert res["status"] == "APPROVED"
     assert res["is_consumed"] is True
 
-    # 2. Reset intent and try invalid signature from other EVM key
+    # 2. Signature from other EVM key is rejected
     intent_id_2 = str(uuid.uuid4())
-    intent_record["intent_id"] = intent_id_2
-    intent_record["is_consumed"] = False
-    intent_record["status"] = IntentLifecycleState.AWAITING_APPROVAL
-    clean_intent_store.save_intent(intent_record)
+    canonical_msg_2 = build_canonical_intent_message(
+        intent_id=intent_id_2,
+        chain_id="eip155:1",
+        wallet_address=auth_evm_addr,
+        input_mint="0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        output_mint="0x6982508145454Ce325dDbE47a25d4ec3d2311933",
+        input_amount_raw="1000000000000000000",
+        max_slippage_bps=150,
+        destination_router="uniswap_v3",
+        asset_id="asset-eth",
+        pool_id="pool-eth",
+        side="BUY",
+        strategy_id="direct",
+        strategy_version="1.0",
+        nonce="nonce-evm-2",
+        expires_at=(now + timedelta(minutes=2)).isoformat()
+    )
+    canonical_digest_2 = compute_intent_digest(canonical_msg_2)
+    tx_hash_2 = hashlib.sha256(canonical_digest_2.encode("utf-8")).hexdigest()
 
-    other_evm_sig = sign_evm_message(priv_other, canonical_digest.encode("utf-8"))
+    intent_record_2 = dict(intent_record)
+    intent_record_2["intent_id"] = intent_id_2
+    intent_record_2["nonce"] = "nonce-evm-2"
+    intent_record_2["canonical_intent_digest"] = canonical_digest_2
+    intent_record_2["transaction_message_hash"] = tx_hash_2
+    intent_record_2["is_consumed"] = False
+    intent_record_2["status"] = IntentLifecycleState.AWAITING_APPROVAL
+    clean_intent_store.save_intent(intent_record_2)
+
+    other_evm_sig = sign_evm_message(priv_other, canonical_digest_2.encode("utf-8"))
     with pytest.raises(Exception) as exc_info:
         clean_intent_store.atomic_approve_intent(
             intent_id=intent_id_2,
             signed_by_address=auth_evm_addr,
-            transaction_message_hash=tx_hash,
-            signature_hex=other_evm_sig # Signed by other key!
+            transaction_message_hash=tx_hash_2,
+            signature_hex=other_evm_sig
         )
     assert exc_info.value.status_code == 400
     assert "Cryptographic signature verification failed" in exc_info.value.detail
 
+    # 3. Established cryptographic test vector verification
+    verifier = ChainSignatureVerifier()
+    std_addr = "0x2c7536e3605d9c16a7a3d7b1898e529396a65c23"
+    std_msg = b"Hello World"
+    std_sig = "6f267aa61dda3067280942299172e2b9f6b4252b492e7c0343ecce6e7edfe0b24110a805ba6777e4303501ea9dfae133855f4ee2e34fd0444bb23d11f296eef31c"
+    assert verifier.verify("eip155:1", std_addr, std_msg, bytes.fromhex(std_sig)) is True
+
+    # 4. Strict low-s malleability enforcement
+    sig_raw = bytes.fromhex(std_sig)
+    r = int.from_bytes(sig_raw[:32], 'big')
+    s = int.from_bytes(sig_raw[32:64], 'big')
+    v = sig_raw[64]
+    high_s = _SECP_N - s
+    recid_flip = (v - 27) ^ 1
+    malleable_sig = r.to_bytes(32, 'big') + high_s.to_bytes(32, 'big') + bytes([27 + recid_flip])
+    assert verifier.verify("eip155:1", std_addr, std_msg, malleable_sig) is False
+
 
 def test_exec_03_canonical_digest_covers_all_authorization_fields():
     """
-    EXEC-03 / P10.2-A.1: The canonical intent message must cover all 15 parameters:
-    intent_id, chain_id, wallet, in_token, out_token, asset_id, pool_id, side,
-    amount, slippage, router, strategy_id, strategy_version, nonce, expires_at.
+    EXEC-03 / P10.2-A.1: The canonical intent message must cover all 15 parameters.
     Mutating ANY of these fields must alter the canonical digest.
     """
     base_params = {
@@ -345,7 +503,6 @@ def test_exec_03_canonical_digest_covers_all_authorization_fields():
     base_msg = build_canonical_intent_message(**base_params)
     base_digest = compute_intent_digest(base_msg)
 
-    # Test mutating every single field
     fields_to_test = [
         ("asset_id", "asset-uuid-MUTATED"),
         ("pool_id", "pool-uuid-MUTATED"),
@@ -366,6 +523,81 @@ def test_exec_03_canonical_digest_covers_all_authorization_fields():
         assert mutated_digest != base_digest, f"Digest failed to change when mutating field: {field}"
 
 
+def test_exec_03_independent_canonical_reconstruction_detects_db_tampering(clean_intent_store):
+    """
+    EXEC-03 / P10.2-A.2:
+    `atomic_approve_intent()` must independently reconstruct the canonical message from
+    stored fields. If a direct SQL update silently modifies a field in the database,
+    approval MUST be rejected with 400.
+    """
+    now = datetime.now(timezone.utc)
+    intent_id = str(uuid.uuid4())
+    sk, wallet = create_solana_keypair()
+
+    canonical_msg = build_canonical_intent_message(
+        intent_id=intent_id,
+        chain_id="solana:mainnet",
+        wallet_address=wallet,
+        input_mint="So11111111111111111111111111111111111111112",
+        output_mint="Token1111111111111111111111111111111111111",
+        input_amount_raw="100000000",
+        max_slippage_bps=150,
+        destination_router="default",
+        asset_id="asset-recon",
+        pool_id="pool-recon",
+        side="BUY",
+        strategy_id="direct",
+        strategy_version="1.0",
+        nonce="nonce-recon-1",
+        expires_at=(now + timedelta(minutes=2)).isoformat()
+    )
+    digest = compute_intent_digest(canonical_msg)
+    tx_hash = hashlib.sha256(digest.encode("utf-8")).hexdigest()
+
+    intent_record = {
+        "intent_id": intent_id,
+        "chain_id": "solana:mainnet",
+        "wallet_address": wallet,
+        "asset_id": "asset-recon",
+        "pool_id": "pool-recon",
+        "side": "BUY",
+        "input_mint": "So11111111111111111111111111111111111111112",
+        "output_mint": "Token1111111111111111111111111111111111111",
+        "input_amount_raw": Decimal("100000000"),
+        "max_slippage_bps": 150,
+        "destination_router": "default",
+        "strategy_id": "direct",
+        "strategy_version": "1.0",
+        "nonce": "nonce-recon-1",
+        "canonical_intent_digest": digest,
+        "transaction_message_hash": tx_hash,
+        "status": IntentLifecycleState.AWAITING_APPROVAL,
+        "policy_checks_passed": True,
+        "created_at": now,
+        "expires_at": now + timedelta(minutes=2),
+        "is_consumed": False
+    }
+    clean_intent_store.save_intent(intent_record)
+
+    sig = sign_solana_message(sk, digest.encode("utf-8"))
+
+    # Direct SQL tampering: mutate input_amount_raw in DB
+    with clean_intent_store._get_connection() as conn:
+        conn.execute("UPDATE execution_intents SET input_amount_raw = '999999999' WHERE intent_id = ?", (intent_id,))
+        conn.commit()
+
+    # Approval must detect the tampering through independent reconstruction
+    with pytest.raises(Exception) as exc_info:
+        clean_intent_store.atomic_approve_intent(
+            intent_id=intent_id,
+            signed_by_address=wallet,
+            transaction_message_hash=tx_hash,
+            signature_hex=sig
+        )
+    assert exc_info.value.status_code == 400
+    assert "Stored intent digest does not match reconstructed canonical intent fields" in exc_info.value.detail
+
+
 def test_exec_04_expired_intents_cannot_be_approved(clean_intent_store):
     """
     EXEC-04: Approval submitted after TTL expiration is rejected with 410.
@@ -374,15 +606,43 @@ def test_exec_04_expired_intents_cannot_be_approved(clean_intent_store):
     intent_id = str(uuid.uuid4())
     sk, wallet = create_solana_keypair()
 
+    canonical_msg = build_canonical_intent_message(
+        intent_id=intent_id,
+        chain_id="solana:mainnet",
+        wallet_address=wallet,
+        input_mint="So11111111111111111111111111111111111111112",
+        output_mint="Token1111111111111111111111111111111111111",
+        input_amount_raw="100000000",
+        max_slippage_bps=150,
+        destination_router="default",
+        asset_id="",
+        pool_id="",
+        side="BUY",
+        strategy_id="direct",
+        strategy_version="1.0",
+        nonce="nonce-exp",
+        expires_at=past.isoformat()
+    )
+    digest = compute_intent_digest(canonical_msg)
+    tx_hash = hashlib.sha256(digest.encode("utf-8")).hexdigest()
+
     intent_record = {
         "intent_id": intent_id,
         "chain_id": "solana:mainnet",
         "wallet_address": wallet,
+        "asset_id": "",
+        "pool_id": "",
+        "side": "BUY",
         "input_mint": "So11111111111111111111111111111111111111112",
         "output_mint": "Token1111111111111111111111111111111111111",
         "input_amount_raw": Decimal("100000000"),
-        "canonical_intent_digest": "expired_digest",
-        "transaction_message_hash": "expired_hash",
+        "max_slippage_bps": 150,
+        "destination_router": "default",
+        "strategy_id": "direct",
+        "strategy_version": "1.0",
+        "nonce": "nonce-exp",
+        "canonical_intent_digest": digest,
+        "transaction_message_hash": tx_hash,
         "status": IntentLifecycleState.AWAITING_APPROVAL,
         "policy_checks_passed": True,
         "created_at": past - timedelta(minutes=2),
@@ -391,13 +651,13 @@ def test_exec_04_expired_intents_cannot_be_approved(clean_intent_store):
     }
     clean_intent_store.save_intent(intent_record)
 
-    sig = sign_solana_message(sk, b"expired_digest")
+    sig = sign_solana_message(sk, digest.encode("utf-8"))
 
     with pytest.raises(Exception) as exc_info:
         clean_intent_store.atomic_approve_intent(
             intent_id=intent_id,
             signed_by_address=wallet,
-            transaction_message_hash="expired_hash",
+            transaction_message_hash=tx_hash,
             signature_hex=sig
         )
     assert exc_info.value.status_code == 410
@@ -412,15 +672,43 @@ def test_exec_05_concurrent_duplicate_approvals_rejected(clean_intent_store):
     intent_id = str(uuid.uuid4())
     sk, wallet = create_solana_keypair()
 
+    canonical_msg = build_canonical_intent_message(
+        intent_id=intent_id,
+        chain_id="solana:mainnet",
+        wallet_address=wallet,
+        input_mint="So11111111111111111111111111111111111111112",
+        output_mint="Token1111111111111111111111111111111111111",
+        input_amount_raw="100000000",
+        max_slippage_bps=150,
+        destination_router="default",
+        asset_id="",
+        pool_id="",
+        side="BUY",
+        strategy_id="direct",
+        strategy_version="1.0",
+        nonce="nonce-dup",
+        expires_at=(now + timedelta(minutes=2)).isoformat()
+    )
+    digest = compute_intent_digest(canonical_msg)
+    tx_hash = hashlib.sha256(digest.encode("utf-8")).hexdigest()
+
     intent_record = {
         "intent_id": intent_id,
         "chain_id": "solana:mainnet",
         "wallet_address": wallet,
+        "asset_id": "",
+        "pool_id": "",
+        "side": "BUY",
         "input_mint": "So11111111111111111111111111111111111111112",
         "output_mint": "Token1111111111111111111111111111111111111",
         "input_amount_raw": Decimal("100000000"),
-        "canonical_intent_digest": "digest_dup",
-        "transaction_message_hash": "hash_dup",
+        "max_slippage_bps": 150,
+        "destination_router": "default",
+        "strategy_id": "direct",
+        "strategy_version": "1.0",
+        "nonce": "nonce-dup",
+        "canonical_intent_digest": digest,
+        "transaction_message_hash": tx_hash,
         "status": IntentLifecycleState.AWAITING_APPROVAL,
         "policy_checks_passed": True,
         "created_at": now,
@@ -429,13 +717,13 @@ def test_exec_05_concurrent_duplicate_approvals_rejected(clean_intent_store):
     }
     clean_intent_store.save_intent(intent_record)
 
-    sig = sign_solana_message(sk, b"digest_dup")
+    sig = sign_solana_message(sk, digest.encode("utf-8"))
 
     # 1. First approval succeeds
     res1 = clean_intent_store.atomic_approve_intent(
         intent_id=intent_id,
         signed_by_address=wallet,
-        transaction_message_hash="hash_dup",
+        transaction_message_hash=tx_hash,
         signature_hex=sig
     )
     assert res1["status"] == "APPROVED"
@@ -446,7 +734,7 @@ def test_exec_05_concurrent_duplicate_approvals_rejected(clean_intent_store):
         clean_intent_store.atomic_approve_intent(
             intent_id=intent_id,
             signed_by_address=wallet,
-            transaction_message_hash="hash_dup",
+            transaction_message_hash=tx_hash,
             signature_hex=sig
         )
     assert exc_info.value.status_code == 409
@@ -462,15 +750,43 @@ def test_exec_06_atomic_state_transitions(clean_intent_store):
     intent_id = str(uuid.uuid4())
     sk, wallet = create_solana_keypair()
 
+    canonical_msg = build_canonical_intent_message(
+        intent_id=intent_id,
+        chain_id="solana:mainnet",
+        wallet_address=wallet,
+        input_mint="So11111111111111111111111111111111111111112",
+        output_mint="Token1111111111111111111111111111111111111",
+        input_amount_raw="100000000",
+        max_slippage_bps=150,
+        destination_router="default",
+        asset_id="",
+        pool_id="",
+        side="BUY",
+        strategy_id="direct",
+        strategy_version="1.0",
+        nonce="nonce-race",
+        expires_at=(now + timedelta(minutes=2)).isoformat()
+    )
+    digest = compute_intent_digest(canonical_msg)
+    tx_hash = hashlib.sha256(digest.encode("utf-8")).hexdigest()
+
     intent_record = {
         "intent_id": intent_id,
         "chain_id": "solana:mainnet",
         "wallet_address": wallet,
+        "asset_id": "",
+        "pool_id": "",
+        "side": "BUY",
         "input_mint": "So11111111111111111111111111111111111111112",
         "output_mint": "Token1111111111111111111111111111111111111",
         "input_amount_raw": Decimal("100000000"),
-        "canonical_intent_digest": "digest_race",
-        "transaction_message_hash": "hash_race",
+        "max_slippage_bps": 150,
+        "destination_router": "default",
+        "strategy_id": "direct",
+        "strategy_version": "1.0",
+        "nonce": "nonce-race",
+        "canonical_intent_digest": digest,
+        "transaction_message_hash": tx_hash,
         "status": IntentLifecycleState.AWAITING_APPROVAL,
         "policy_checks_passed": True,
         "created_at": now,
@@ -479,7 +795,7 @@ def test_exec_06_atomic_state_transitions(clean_intent_store):
     }
     clean_intent_store.save_intent(intent_record)
 
-    sig = sign_solana_message(sk, b"digest_race")
+    sig = sign_solana_message(sk, digest.encode("utf-8"))
 
     results = []
     errors = []
@@ -489,7 +805,7 @@ def test_exec_06_atomic_state_transitions(clean_intent_store):
             res = clean_intent_store.atomic_approve_intent(
                 intent_id=intent_id,
                 signed_by_address=wallet,
-                transaction_message_hash="hash_race",
+                transaction_message_hash=tx_hash,
                 signature_hex=sig
             )
             results.append(res)
@@ -788,7 +1104,7 @@ def test_ledger_08_idempotency_key_prevents_duplicate_posting(clean_ledger_servi
 
 
 # =====================================================================
-# 3. Direct SQLite Database-Level Invariant Enforcement Tests (P10.2-A.1)
+# 3. Direct SQLite Database-Level Invariant Enforcement Tests (P10.2-A.2)
 # =====================================================================
 
 def test_ledger_09_direct_sql_insert_posted_blocked_by_db_trigger(clean_ledger_service):
@@ -811,11 +1127,41 @@ def test_ledger_09_direct_sql_insert_posted_blocked_by_db_trigger(clean_ledger_s
         conn.close()
 
 
-def test_ledger_10_direct_sql_unbalanced_post_blocked_by_db_trigger(clean_ledger_service):
+def test_ledger_10_direct_sql_status_rollback_blocked_by_db_trigger(clean_ledger_service):
     """
-    P10.2-A.1 / Direct SQL Audit:
-    Attempting to insert a draft journal with 1 line or unbalanced lines via raw SQL,
-    then updating status to 'POSTED', MUST be aborted by SQLite trigger `trg_check_journal_post_invariants`.
+    P10.2-A.2 / Direct SQL Audit:
+    Attempting to rollback a POSTED journal to DRAFT status via raw SQL
+    MUST be aborted by `trg_enforce_valid_status_transition` and `trg_prevent_posted_journal_update`.
+    """
+    journal_id = str(uuid.uuid4())
+    lines = [
+        {"account_code": "WALLET_SOL", "wallet_address": "W1", "mint_address": "SOL", "debit_amount_raw": 0, "credit_amount_raw": Decimal("100"), "usd_rate": Decimal("1.0")},
+        {"account_code": "WALLET_TOKEN", "wallet_address": "W1", "mint_address": "TOK", "debit_amount_raw": Decimal("100"), "credit_amount_raw": 0, "usd_rate": Decimal("1.0")}
+    ]
+    clean_ledger_service.post_journal(
+        journal_id=journal_id,
+        idempotency_key="idem-rb-test",
+        journal_type="TRANSFER",
+        description="Rollback Test",
+        lines=lines
+    )
+
+    conn = sqlite3.connect(clean_ledger_service.db_path)
+    try:
+        with pytest.raises(sqlite3.IntegrityError) as exc_info:
+            conn.execute(f"UPDATE ledger_journals SET status = 'DRAFT' WHERE id = '{journal_id}'")
+        assert "FINANCIAL INTEGRITY VIOLATION" in str(exc_info.value)
+    finally:
+        conn.close()
+
+
+def test_ledger_11_direct_sql_exact_integer_balance_and_boundary_precision(clean_ledger_service):
+    """
+    P10.2-A.2 / Direct SQL Audit:
+    Verifies exact integer balance arithmetic:
+    1. Single line in draft fails post check (< 2 lines).
+    2. Fractional boundary imbalance (1 unit off in 10^8 integer scale, 0.00000001 USD)
+       MUST be aborted with zero floating-point epsilon tolerance.
     """
     conn = sqlite3.connect(clean_ledger_service.db_path)
     try:
@@ -827,33 +1173,36 @@ def test_ledger_10_direct_sql_unbalanced_post_blocked_by_db_trigger(clean_ledger
         """)
         conn.execute("""
             INSERT INTO ledger_lines (
-                journal_id, account_code, wallet_address, mint_address, debit_amount_raw, credit_amount_raw, usd_rate
-            ) VALUES ('direct_j2', 'WALLET_SOL', 'W1', 'SOL', '100', '0', '1.0')
+                journal_id, account_code, wallet_address, mint_address,
+                debit_amount_raw, credit_amount_raw, usd_rate,
+                debit_usd_units, credit_usd_units
+            ) VALUES ('direct_j2', 'WALLET_SOL', 'W1', 'SOL', '100', '0', '1.0', 10000000000, 0)
         """)
         with pytest.raises(sqlite3.IntegrityError) as exc_info_lines:
             conn.execute("UPDATE ledger_journals SET status = 'POSTED' WHERE id = 'direct_j2'")
         assert "Journal has fewer than 2 lines" in str(exc_info_lines.value)
 
-        # Case 2: 2 lines but unbalanced
+        # Case 2: Boundary precision attack (1 integer unit imbalance)
         conn.execute("""
             INSERT INTO ledger_lines (
-                journal_id, account_code, wallet_address, mint_address, debit_amount_raw, credit_amount_raw, usd_rate
-            ) VALUES ('direct_j2', 'WALLET_TOKEN', 'W1', 'BONK', '0', '80', '1.0')
+                journal_id, account_code, wallet_address, mint_address,
+                debit_amount_raw, credit_amount_raw, usd_rate,
+                debit_usd_units, credit_usd_units
+            ) VALUES ('direct_j2', 'WALLET_TOKEN', 'W1', 'BONK', '0', '100', '1.0', 0, 9999999999)
         """)
         with pytest.raises(sqlite3.IntegrityError) as exc_info_balance:
             conn.execute("UPDATE ledger_journals SET status = 'POSTED' WHERE id = 'direct_j2'")
-        assert "Journal debits and credits do not balance" in str(exc_info_balance.value)
+        assert "Journal debits and credits do not balance in exact integer units" in str(exc_info_balance.value)
     finally:
         conn.close()
 
 
-def test_ledger_11_direct_sql_line_insert_on_posted_blocked_by_db_trigger(clean_ledger_service):
+def test_ledger_12_direct_sql_line_insert_on_posted_blocked_by_db_trigger(clean_ledger_service):
     """
     P10.2-A.1 / Direct SQL Audit:
     Attempting to insert new ledger lines into an already POSTED journal via raw SQL
     MUST be aborted by SQLite trigger `trg_prevent_line_insert_on_posted`.
     """
-    # 1. Post a valid journal via service
     journal_id = str(uuid.uuid4())
     lines = [
         {"account_code": "WALLET_SOL", "wallet_address": "W1", "mint_address": "SOL", "debit_amount_raw": 0, "credit_amount_raw": Decimal("100"), "usd_rate": Decimal("1.0")},
@@ -867,14 +1216,15 @@ def test_ledger_11_direct_sql_line_insert_on_posted_blocked_by_db_trigger(clean_
         lines=lines
     )
 
-    # 2. Attempt raw SQL line insertion into this posted journal
     conn = sqlite3.connect(clean_ledger_service.db_path)
     try:
         with pytest.raises(sqlite3.IntegrityError) as exc_info:
             conn.execute(f"""
                 INSERT INTO ledger_lines (
-                    journal_id, account_code, wallet_address, mint_address, debit_amount_raw, credit_amount_raw, usd_rate
-                ) VALUES ('{journal_id}', 'EXPENSE_NETWORK_FEE', 'W1', 'SOL', '5', '0', '1.0')
+                    journal_id, account_code, wallet_address, mint_address,
+                    debit_amount_raw, credit_amount_raw, usd_rate,
+                    debit_usd_units, credit_usd_units
+                ) VALUES ('{journal_id}', 'EXPENSE_NETWORK_FEE', 'W1', 'SOL', '5', '0', '1.0', 500000000, 0)
             """)
         assert "Cannot insert lines into an already POSTED journal" in str(exc_info.value)
     finally:
@@ -908,7 +1258,6 @@ def test_pg_ledger_deferred_trigger_integration():
         conn.autocommit = True
         cur = conn.cursor()
 
-        # 1. Create base tables
         cur.execute("""
             CREATE TABLE live_ledger_journals (
                 journal_id UUID PRIMARY KEY,
@@ -930,17 +1279,14 @@ def test_pg_ledger_deferred_trigger_integration():
             );
         """)
 
-        # 2. Apply Migration 004
         migration_path = os.path.abspath("./migrations/004_p10_1_ledger_hardening.sql")
         with open(migration_path, "r", encoding="utf-8") as f:
             cur.execute(f.read())
 
-        # 3. Test TRUNCATE prevention
         with pytest.raises(psycopg2.DatabaseError) as exc_info:
             cur.execute("TRUNCATE live_ledger_journals;")
         assert "TRUNCATE forbidden" in str(exc_info.value)
 
-        # 4. Test Single-Line Deferred Constraint (LEDGER-03)
         conn.autocommit = False
         j_id = str(uuid.uuid4())
         cur.execute(
@@ -956,7 +1302,6 @@ def test_pg_ledger_deferred_trigger_integration():
         assert "Ledger line count violation (LEDGER-03)" in str(exc_info.value)
         conn.rollback()
 
-        # 5. Test Unbalanced Deferred Constraint (LEDGER-01)
         cur.execute(
             "INSERT INTO live_ledger_journals (journal_id, chain_id, status, total_amount, idempotency_key) VALUES (%s, %s, %s, %s, %s);",
             (j_id, "solana:mainnet", "POSTED", 100, "idem-pg-2")
@@ -974,7 +1319,6 @@ def test_pg_ledger_deferred_trigger_integration():
         assert "Ledger balance violation (LEDGER-01)" in str(exc_info.value)
         conn.rollback()
 
-        # 6. Test Balanced Journal Commit Succeeds
         cur.execute(
             "INSERT INTO live_ledger_journals (journal_id, chain_id, status, total_amount, idempotency_key) VALUES (%s, %s, %s, %s, %s);",
             (j_id, "solana:mainnet", "POSTED", 100, "idem-pg-3")
