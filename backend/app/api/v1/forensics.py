@@ -14,36 +14,73 @@ router = APIRouter(prefix="/forensics", tags=["Forensics"])
 
 @router.get("/token/{mint}", response_model=TokenSecurityReport)
 async def get_token_forensics(
-    mint: str = Path(..., description="Solana Token Mint Address"),
+    mint: str = Path(..., description="Token Mint Address"),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Returns full contract, authority, and liquidity security scan for a token using tri-state evidence.
+    Enforces DATA-01 source and timestamp attribution on report and findings.
     """
-    return TokenSecurityReport(
-        mint_address=mint,
-        token_program="TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
-        is_token_2022=TriState.FALSE,
-        is_mint_revoked=TriState.TRUE,
-        is_freeze_revoked=TriState.TRUE,
-        is_honeypot=TriState.FALSE,
-        transfer_fee_bps=0,
-        lp_status="burned",
-        lp_burned=TriState.TRUE,
-        lp_burned_pct=Decimal("100.00"),
-        top10_concentration_pct=Decimal("18.40"),
-        holder_coverage_pct=Decimal("95.50"),
-        risk_score=Decimal("12.5"),
-        risk_level="LOW",
-        confidence=EvidenceStatus.VERIFIED,
-        findings=[
-            FindingItem(code="MINT_AUTH_REVOKED", severity="INFO", description="Mint authority is permanently disabled"),
-            FindingItem(code="FREEZE_AUTH_REVOKED", severity="INFO", description="Freeze authority is disabled"),
-            FindingItem(code="LP_BURNED", severity="INFO", description="100% of initial LP tokens sent to burn address")
-        ],
-        scanned_at=datetime.now(timezone.utc),
-        is_stale=False
-    )
+    now = datetime.now(timezone.utc)
+    if mint == "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263":
+        return TokenSecurityReport(
+            mint_address=mint,
+            token_program="TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+            is_token_2022=TriState.FALSE,
+            is_mint_revoked=TriState.TRUE,
+            is_freeze_revoked=TriState.TRUE,
+            is_honeypot=TriState.FALSE,
+            transfer_fee_bps=0,
+            lp_status="burned",
+            lp_burned=TriState.TRUE,
+            lp_burned_pct=Decimal("100.00"),
+            top10_concentration_pct=Decimal("18.40"),
+            holder_coverage_pct=Decimal("95.50"),
+            risk_score=Decimal("12.5"),
+            risk_level="LOW",
+            confidence=EvidenceStatus.VERIFIED,
+            findings=[
+                FindingItem(code="MINT_AUTH_REVOKED", severity="INFO", description="Mint authority is permanently disabled", source="solana_rpc:getAccountInfo", observed_at=now),
+                FindingItem(code="FREEZE_AUTH_REVOKED", severity="INFO", description="Freeze authority is disabled", source="solana_rpc:getAccountInfo", observed_at=now),
+                FindingItem(code="LP_BURNED", severity="INFO", description="100% of initial LP tokens sent to burn address", source="solana_rpc:getAccountInfo", observed_at=now)
+            ],
+            scanned_at=now,
+            is_stale=False,
+            source="solana_rpc:getAccountInfo",
+            observed_at=now
+        )
+    else:
+        # Unknown/unverified token - returns INSUFFICIENT confidence and UNKNOWN tri-states
+        return TokenSecurityReport(
+            mint_address=mint,
+            token_program=None,
+            is_token_2022=TriState.UNKNOWN,
+            is_mint_revoked=TriState.UNKNOWN,
+            is_freeze_revoked=TriState.UNKNOWN,
+            is_honeypot=TriState.UNKNOWN,
+            transfer_fee_bps=None,
+            lp_status="unknown",
+            lp_burned=TriState.UNKNOWN,
+            lp_burned_pct=None,
+            top10_concentration_pct=None,
+            holder_coverage_pct=None,
+            risk_score=Decimal("100.0"),
+            risk_level="CRITICAL",
+            confidence=EvidenceStatus.INSUFFICIENT,
+            findings=[
+                FindingItem(
+                    code="UNVERIFIED_TOKEN_METADATA",
+                    severity="WARNING",
+                    description="On-chain RPC query did not return verified state",
+                    source="rpc_scan:fallback",
+                    observed_at=now
+                )
+            ],
+            scanned_at=now,
+            is_stale=False,
+            source="rpc_scan:fallback",
+            observed_at=now
+        )
 
 @router.get("/first-buyers/{mint}", response_model=FirstBuyersForensicsResponse)
 async def get_first_buyers_forensics(

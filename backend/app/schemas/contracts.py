@@ -55,9 +55,12 @@ class TokenDiscoveryResponse(BaseModel):
     mint_revoked: TriState
     is_token_2022: TriState
     data_freshness: DataFreshness = DataFreshness.REALTIME
+    source: Optional[str] = "dexscreener:pair_feed"
+    observed_at: Optional[datetime] = None
 
 class CandidateRegistrationRequest(BaseModel):
     mint_address: str
+    chain_id: Optional[str] = "solana:mainnet"
     symbol: Optional[str] = None
     name: Optional[str] = None
     token_program: Optional[str] = None
@@ -65,6 +68,7 @@ class CandidateRegistrationRequest(BaseModel):
     pool_address: Optional[str] = None
     dex_program: Optional[str] = None
     quote_mint: Optional[str] = None
+    source: Optional[str] = "manual_registration"
 
 # Forensics Schemas
 class FindingItem(BaseModel):
@@ -72,6 +76,8 @@ class FindingItem(BaseModel):
     severity: str
     description: str
     evidence: Optional[Dict[str, Any]] = None
+    source: Optional[str] = "onchain_rpc"
+    observed_at: Optional[datetime] = None
 
 class TokenSecurityReport(BaseModel):
     mint_address: str
@@ -92,6 +98,9 @@ class TokenSecurityReport(BaseModel):
     findings: List[FindingItem] = []
     scanned_at: datetime
     is_stale: bool = False
+    source: Optional[str] = "onchain_rpc"
+    observed_at: Optional[datetime] = None
+
 
 class FirstBuyerItem(BaseModel):
     buy_rank: int

@@ -33,13 +33,17 @@ class SecurityNormalizer:
                 findings.append(FindingItem(
                     code="ACTIVE_MINT_AUTHORITY",
                     severity="CRITICAL_FAIL",
-                    description=f"Token has active mint authority: {mint_auth}"
+                    description=f"Token has active mint authority: {mint_auth}",
+                    source="solana_rpc:getAccountInfo",
+                    observed_at=now
                 ))
             if is_freeze_revoked == TriState.FALSE:
                 findings.append(FindingItem(
                     code="ACTIVE_FREEZE_AUTHORITY",
                     severity="CRITICAL_FAIL",
-                    description=f"Token has active freeze authority: {freeze_auth}"
+                    description=f"Token has active freeze authority: {freeze_auth}",
+                    source="solana_rpc:getAccountInfo",
+                    observed_at=now
                 ))
 
             # Inspect Token-2022 Extensions
@@ -50,7 +54,9 @@ class SecurityNormalizer:
                     findings.append(FindingItem(
                         code=f"TOKEN_2022_{ext_type.upper()}",
                         severity="CRITICAL_FAIL",
-                        description=f"High-risk Token-2022 extension detected: {ext_type}"
+                        description=f"High-risk Token-2022 extension detected: {ext_type}",
+                        source="solana_rpc:getAccountInfo",
+                        observed_at=now
                     ))
         else:
             is_token_2022 = TriState.UNKNOWN
@@ -71,7 +77,9 @@ class SecurityNormalizer:
                         findings.append(FindingItem(
                             code="HIGH_TRANSFER_TAX",
                             severity="CRITICAL_FAIL",
-                            description=f"Excessive transfer tax configured: {transfer_fee_bps / 100}%"
+                            description=f"Excessive transfer tax configured: {transfer_fee_bps / 100}%",
+                            source="goplus_api",
+                            observed_at=now
                         ))
                 except (ValueError, TypeError):
                     pass
@@ -91,7 +99,9 @@ class SecurityNormalizer:
                 findings.append(FindingItem(
                     code=r.get("name", "RUGCHECK_RISK"),
                     severity="WARNING" if r.get("level") == "warn" else "CRITICAL_FAIL",
-                    description=r.get("description", "")
+                    description=r.get("description", ""),
+                    source="rugcheck_api",
+                    observed_at=now
                 ))
 
         # 3. Holder Concentration Calculation
@@ -128,6 +138,8 @@ class SecurityNormalizer:
                 risk_score = Decimal("12.50")
                 risk_level = "LOW"
 
+        primary_source = "solana_rpc:getAccountInfo" if rpc_mint_info else ("goplus_api" if goplus_report else "unverified_input")
+
         return TokenSecurityReport(
             mint_address=mint_address,
             token_program=rpc_mint_info.get("owner_program") if rpc_mint_info else None,
@@ -146,7 +158,9 @@ class SecurityNormalizer:
             confidence=confidence,
             findings=findings,
             scanned_at=now,
-            is_stale=False
+            is_stale=False,
+            source=primary_source,
+            observed_at=now
         )
 
 security_normalizer = SecurityNormalizer()
