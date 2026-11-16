@@ -1,6 +1,29 @@
 """
-WF-33: EVM Chain Reorganization Handler (Windmill Event Worker)
-Tracks block parent hashes, detects forks/orphaned blocks, and triggers event rollback.
+summary: Chain Reorganization Handler (WF-33)
+description: Evaluates block parent hashes across 12 chains, detects chain reorgs, and triggers rollback of unfinalized discovery events.
+schema:
+  type: object
+  properties:
+    chain_id:
+      type: string
+      default: eip155:8453
+      description: Target CAIP-2 chain identifier
+    block_number:
+      type: integer
+      default: 1001
+      description: Current block height evaluated
+    block_hash:
+      type: string
+      default: 0xBlockHash1001
+      description: Current block hash
+    parent_hash:
+      type: string
+      default: 0xParentHash1000
+      description: Reported parent hash from peer header
+    known_parent_hash:
+      type: string
+      default: 0xParentHash1000
+      description: Locally verified canonical parent hash at height - 1
 """
 from typing import Dict, Any, List
 
@@ -33,15 +56,21 @@ def evaluate_block_canonicality(
         "action_required": "NONE"
     }
 
-def main() -> Dict[str, Any]:
+def main(
+    chain_id: str = "eip155:8453",
+    block_number: int = 1001,
+    block_hash: str = "0xBlockHash1001",
+    parent_hash: str = "0xParentHash1000",
+    known_parent_hash: str = "0xParentHash1000"
+) -> Dict[str, Any]:
     return evaluate_block_canonicality(
-        chain_id="eip155:8453",
-        block_number=1001,
-        block_hash="0xBlockHash1001",
-        parent_hash="0xParentHash1000",
-        known_parent_hash="0xParentHash1000"
+        chain_id=chain_id,
+        block_number=block_number,
+        block_hash=block_hash,
+        parent_hash=parent_hash,
+        known_parent_hash=known_parent_hash
     )
 
 if __name__ == "__main__":
     import json
-    print(json.dumps(main()))
+    print(json.dumps(main(), default=str))

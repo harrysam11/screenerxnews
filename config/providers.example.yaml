@@ -1,0 +1,31 @@
+# Example Provider Configuration (Phase P10.2-B)
+# Defines user-owned RPC and data providers with quotas and timeouts.
+# NOTE: Real secrets should be kept in local .env or injected via the vault.
+
+providers:
+  quicknode_solana:
+    chain_id: "solana:mainnet"
+    category: "RPC"
+    endpoint: "https://example-solana.quiknode.pro"
+    rate_limit_rps: 25
+    monthly_quota_requests: 10000000
+    timeout_seconds: 5.0
+    enabled: true
+
+  alchemy_ethereum:
+    chain_id: "eip155:1"
+    category: "RPC"
+    endpoint: "https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY"
+    rate_limit_rps: 15
+    monthly_quota_requests: 5000000
+    timeout_seconds: 5.0
+    enabled: true
+
+  public_solana:
+    chain_id: "solana:mainnet"
+    category: "RPC"
+    endpoint: "https://api.mainnet-beta.solana.com"
+    rate_limit_rps: 5
+    monthly_quota_requests: 500000
+    timeout_seconds: 8.0
+    enabled: true

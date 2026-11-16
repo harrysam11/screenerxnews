@@ -1,0 +1,38 @@
+# Example Chain Registry Configuration (Phase P10.2-B)
+# Defines CAIP-2 chain identifiers, native tokens, and confirmation thresholds.
+
+chains:
+  "solana:mainnet":
+    name: "Solana Mainnet"
+    native_token: "SOL"
+    native_decimals: 9
+    finality_confirmations: 32
+    explorer_url: "https://solscan.io"
+
+  "eip155:1":
+    name: "Ethereum Mainnet"
+    native_token: "ETH"
+    native_decimals: 18
+    finality_confirmations: 12
+    explorer_url: "https://etherscan.io"
+
+  "eip155:8453":
+    name: "Base Mainnet"
+    native_token: "ETH"
+    native_decimals: 18
+    finality_confirmations: 64
+    explorer_url: "https://basescan.org"
+
+  "eip155:56":
+    name: "BNB Smart Chain"
+    native_token: "BNB"
+    native_decimals: 18
+    finality_confirmations: 15
+    explorer_url: "https://bscscan.com"
+
+  "sui:mainnet":
+    name: "Sui Mainnet"
+    native_token: "SUI"
+    native_decimals: 9
+    finality_confirmations: 1
+    explorer_url: "https://suiscan.xyz"

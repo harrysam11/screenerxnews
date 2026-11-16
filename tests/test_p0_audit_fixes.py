@@ -28,6 +28,25 @@ def test_symmetrical_paper_sell_order():
     AUD-04: Test that paper order supports SELL side where input_amount_raw 
     is denominated in raw meme token units and output is SOL.
     """
+    from tests.fixtures.test_asset_helper import register_test_asset_fixture
+    from app.core.config import settings
+    register_test_asset_fixture(settings.get_canonical_sqlite_path(), "solana:mainnet", "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", decimals=5, symbol="BONK", authoritative=True)
+    import sqlite3
+    with sqlite3.connect(settings.get_canonical_sqlite_path()) as conn:
+        conn.execute("""
+            INSERT OR REPLACE INTO paper_positions_v2 (
+                position_id, account_id, chain_id, asset_address, symbol,
+                side, token_amount_raw, cost_basis_native, entry_price_native,
+                current_price_native, unrealized_pnl_native, opened_at, updated_at
+            ) VALUES (
+                'pos_test_bonk_seed', '00000000-0000-0000-0000-000000000001',
+                'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp', 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263',
+                'BONK', 'LONG', '100000000000.0', '450.0', '0.000045', '0.000045', '0.0',
+                datetime('now'), datetime('now')
+            );
+        """)
+        conn.commit()
+
     order_payload = {
         "account_id": "00000000-0000-0000-0000-000000000001",
         "client_order_id": "client-sell-test-001",
@@ -42,7 +61,7 @@ def test_symmetrical_paper_sell_order():
     response = client.post("/api/v1/paper/order", json=order_payload)
     assert response.status_code == 200
     data = response.json()
-    assert data["status"] == "FILLED"
+    assert data["status"] == "FILLED", f"Order was not filled, full data: {data}"
     assert data["side"] == "SELL"
     assert data["client_order_id"] == "client-sell-test-001"
     assert data["output_amount_raw"] is not None

@@ -1,6 +1,7 @@
 from typing import Dict, Any, Optional
 import httpx
 from app.core.config import settings
+from app.core.network import get_http_client, OfflineModeBlockedException
 
 class GoPlusService:
     def __init__(self, base_url: str = settings.GOPLUS_API_BASE):
@@ -13,13 +14,15 @@ class GoPlusService:
         """
         url = f"{self.base_url}/api/v1/solana/token_security"
         params = {"contract_addresses": mint_address}
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with get_http_client(timeout=10.0) as client:
             try:
                 resp = await client.get(url, params=params)
                 if resp.status_code == 200:
                     data = resp.json()
                     result = data.get("result", {})
                     return result.get(mint_address)
+            except OfflineModeBlockedException:
+                raise
             except Exception:
                 return None
         return None

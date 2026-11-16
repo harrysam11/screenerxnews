@@ -1,6 +1,7 @@
 from typing import Dict, Any, List, Optional
 import httpx
 from app.core.config import settings
+from app.core.network import get_http_client, OfflineModeBlockedException
 
 class DexScreenerService:
     def __init__(self, base_url: str = settings.DEX_SCREENER_API_BASE):
@@ -13,7 +14,7 @@ class DexScreenerService:
         Rate limit: 60 RPM
         """
         url = f"{self.base_url}/token-profiles/latest/v1"
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with get_http_client(timeout=10.0) as client:
             resp = await client.get(url)
             if resp.status_code == 200:
                 data = resp.json()
@@ -30,7 +31,7 @@ class DexScreenerService:
             return []
         joined = ",".join(mint_addresses[:30])
         url = f"{self.base_url}/tokens/v1/solana/{joined}"
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with get_http_client(timeout=10.0) as client:
             resp = await client.get(url)
             if resp.status_code == 200:
                 return resp.json()
@@ -42,7 +43,7 @@ class DexScreenerService:
         Endpoint: /latest/dex/search?q={query}
         """
         url = f"{self.base_url}/latest/dex/search"
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with get_http_client(timeout=10.0) as client:
             resp = await client.get(url, params={"q": query})
             if resp.status_code == 200:
                 data = resp.json()

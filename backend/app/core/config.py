@@ -1,6 +1,7 @@
-from typing import List
+import os
+from typing import List, Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field
+from pydantic import Field, model_validator
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -9,10 +10,26 @@ class Settings(BaseSettings):
     APP_ENV: str = "development"
     DEBUG: bool = True
     APP_PORT: int = 8000
+    HOST: str = "127.0.0.1"
 
-    DATABASE_URL: str = Field(
-        default="postgresql+asyncpg://memecoin_user:memecoin_secure_pass@localhost:5432/memecoin_os"
-    )
+    # Runtime Profile & Operating Mode (P10.2-B Lightweight Core)
+    PROFILE: str = "lite"  # "lite" (Termux / SQLite-first / low memory) or "full"
+    OPERATING_MODE: str = "paper_trading"  # "offline_research", "online_research", "paper_trading", "live_trading"
+
+    # Database Configuration (SQLite default for self-hosted zero-external-service operation)
+    DATABASE_BACKEND: str = "sqlite"  # "sqlite" or "postgresql"
+    DATABASE_URL: str = Field(default="sqlite:///./data/memecoin_os.db")
+    SQLITE_DB_PATH: str = "./data/memecoin_os.db"
+
+    # Optional Orchestrations & External Integrations (default False for pure lightweight core)
+    ENABLE_DOCKER: bool = False
+    ENABLE_N8N: bool = False
+    ENABLE_WINDMILL: bool = False
+    ENABLE_HERMES: bool = False
+    ENABLE_REDIS: bool = False
+
+    # Security & Network Controls
+    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:8000", "http://127.0.0.1:8000"]
 
     SOLANA_RPC_URL: str = "https://api.mainnet-beta.solana.com"
     SOLANA_WS_URL: str = "wss://api.mainnet-beta.solana.com"
@@ -23,6 +40,14 @@ class Settings(BaseSettings):
     RUGCHECK_API_BASE: str = "https://api.rugcheck.xyz"
     JUPITER_QUOTE_API_BASE: str = "https://quote-api.jup.ag/v6"
 
+    # Provider & Credential Security Settings (P10.2-C & P10.2-C.2)
+    CREDENTIAL_VAULT_KEY: Optional[str] = None
+    CREDENTIAL_VAULT_SALT: str = "screenerxnews_p10_2_c_salt"
+    ADMIN_API_TOKEN: Optional[str] = None
+    PROVENANCE_COLLECTOR_SECRET: Optional[str] = None
+    PROVIDER_CIRCUIT_BREAKER_FAILURES: int = 3
+    PROVIDER_COOLDOWN_SECONDS: float = 60.0
+
     # Strict Safety Constraints
     ALLOW_LIVE_TRADING: bool = False
     COLD_VAULT_ADDRESSES: List[str] = []
@@ -32,5 +57,78 @@ class Settings(BaseSettings):
     MAX_DAILY_LOSS_SOL: float = 2.0
     MAX_SLIPPAGE_BPS: int = 250
     MAX_PRICE_IMPACT_BPS: int = 300
+
+    @property
+    def is_sqlite(self) -> bool:
+        return self.DATABASE_BACKEND.lower() == "sqlite" or self.DATABASE_URL.startswith("sqlite")
+
+    @property
+    def is_offline(self) -> bool:
+        return self.OPERATING_MODE == "offline_research"
+
+    @property
+    def can_execute_live(self) -> bool:
+        return self.ALLOW_LIVE_TRADING and self.OPERATING_MODE == "live_trading"
+
+    def get_canonical_sqlite_path(self) -> str:
+        """
+        Returns the single authoritative, absolute SQLite file path, or ':memory:'.
+        Guarantees that all subsystems (database engine, migrator, execution store,
+        ledger service, backup service) connect to the exact same file.
+        """
+        if ":memory:" in self.DATABASE_URL or self.SQLITE_DB_PATH == ":memory:":
+            return ":memory:"
+        return os.path.abspath(self.SQLITE_DB_PATH)
+
+    @model_validator(mode="after")
+    def validate_canonical_database_configuration(self) -> "Settings":
+        """
+        Canonical SQLite Configuration Validator:
+        Ensures DATABASE_URL and SQLITE_DB_PATH never disagree or silently split data.
+        If both are specified pointing to different SQLite targets, raises ValueError at startup.
+        If one is customized, canonicalizes both to the same path.
+        """
+        if not self.is_sqlite:
+            return self
+
+        # Handle in-memory mode
+        if ":memory:" in self.DATABASE_URL or self.SQLITE_DB_PATH == ":memory:":
+            self.SQLITE_DB_PATH = ":memory:"
+            if ":memory:" not in self.DATABASE_URL:
+                self.DATABASE_URL = "sqlite:///:memory:"
+            return self
+
+        # Extract file path from DATABASE_URL
+        url_clean = self.DATABASE_URL
+        for prefix in ("sqlite+aiosqlite:///", "sqlite:///"):
+            if url_clean.startswith(prefix):
+                url_clean = url_clean[len(prefix):]
+                break
+
+        url_abs = os.path.abspath(url_clean)
+        path_abs = os.path.abspath(self.SQLITE_DB_PATH)
+
+        default_rel = "./data/memecoin_os.db"
+        default_abs = os.path.abspath(default_rel)
+
+        # Detect conflicting non-matching explicit configurations
+        url_is_default = (url_abs == default_abs)
+        path_is_default = (path_abs == default_abs)
+
+        if url_abs != path_abs:
+            if not url_is_default and not path_is_default:
+                raise ValueError(
+                    f"Database configuration conflict: DATABASE_URL ('{self.DATABASE_URL}') "
+                    f"and SQLITE_DB_PATH ('{self.SQLITE_DB_PATH}') point to different SQLite database files. "
+                    "Configure a single canonical SQLite path or ensure both match."
+                )
+            elif not url_is_default and path_is_default:
+                # DATABASE_URL was customized; synchronize SQLITE_DB_PATH
+                self.SQLITE_DB_PATH = url_clean
+            elif url_is_default and not path_is_default:
+                # SQLITE_DB_PATH was customized; synchronize DATABASE_URL
+                self.DATABASE_URL = f"sqlite:///{self.SQLITE_DB_PATH}"
+
+        return self
 
 settings = Settings()

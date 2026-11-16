@@ -294,6 +294,20 @@ html, body {
   .sidebar .nav-label, .sidebar .brand-title {
     display: none;
   }
+  .sidebar .nav-link {
+    justify-content: center;
+    padding: var(--space-3) 0;
+  }
+  .sidebar .sidebar-header {
+    padding: var(--space-4) var(--space-2);
+    justify-content: center;
+  }
+  .sidebar .brand {
+    justify-content: center;
+  }
+  .sidebar .sidebar-footer {
+    display: none;
+  }
   .main-content {
     margin-left: 72px;
   }
@@ -864,7 +878,64 @@ html, body {
   color: var(--brand-primary);
 }
 .bottom-nav-icon {
-  font-size: 1.2rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  flex-shrink: 0;
+}
+.bottom-nav-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* SVG Vector Icons System */
+.icon {
+  display: inline-block;
+  width: 1.25rem;
+  height: 1.25rem;
+  vertical-align: middle;
+  flex-shrink: 0;
+  stroke-width: 2;
+}
+.icon-xs {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+.icon-sm {
+  width: 1rem;
+  height: 1rem;
+}
+.icon-md {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+.icon-lg {
+  width: 1.5rem;
+  height: 1.5rem;
+}
+.icon-xl {
+  width: 2.25rem;
+  height: 2.25rem;
+}
+.nav-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  flex-shrink: 0;
+}
+.nav-icon svg {
+  width: 100%;
+  height: 100%;
+}
+.badge-icon {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 4px;
+  vertical-align: middle;
 }
 
 /* Utility Badges */
@@ -957,3 +1028,101 @@ html, body {
   }
 }
 
+
+/* ==========================================================================
+   P10.2-J.2 COMMAND CENTER SOFT-CARD UTILITIES & RESPONSIVE POLISH
+   ========================================================================== */
+
+.grid { display: grid; }
+.grid-cols-1 { grid-template-columns: repeat(1, minmax(0, 1fr)); }
+.grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+@media (min-width: 640px) {
+  .sm\:grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sm\:grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+@media (min-width: 768px) {
+  .md\:grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .md\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (min-width: 1024px) {
+  .lg\:grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .lg\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .lg\:grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+.gap-1 { gap: 0.25rem; }
+.gap-2 { gap: 0.5rem; }
+.gap-3 { gap: 0.75rem; }
+.gap-4 { gap: 1rem; }
+.gap-6 { gap: 1.5rem; }
+
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.max-w-80 { max-width: 80px; }
+.max-w-100 { max-width: 100px; }
+.max-w-120 { max-width: 120px; }
+.max-w-150 { max-width: 150px; }
+.max-w-200 { max-width: 200px; }
+.max-w-300 { max-width: 300px; }
+.max-w-400 { max-width: 400px; }
+
+.max-h-400 {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.overflow-x-auto {
+  overflow-x: auto;
+}
+
+.table-responsive-wrapper {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.space-y-2 > * + * { margin-top: 0.5rem; }
+.space-y-3 > * + * { margin-top: 0.75rem; }
+
+.rounded { border-radius: var(--radius-sm); }
+.rounded-lg { border-radius: var(--radius-md); }
+.rounded-card { border-radius: var(--radius-card); }
+
+.bg-subtle { background-color: var(--bg-subtle); }
+.bg-danger-subtle { background-color: var(--status-danger-bg); }
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+  display: inline-block;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* System Theme Preference Media Query */
+@media (prefers-color-scheme: light) {
+  :root[data-theme="system"] {
+    --bg-canvas: #f8fafc;
+    --bg-surface: #ffffff;
+    --bg-card: #ffffff;
+    --bg-card-hover: #f1f5f9;
+    --bg-subtle: #e2e8f0;
+    --bg-input: #f8fafc;
+    --border-subtle: rgba(0, 0, 0, 0.08);
+    --border-medium: rgba(0, 0, 0, 0.16);
+    --text-primary: #0f172a;
+    --text-secondary: #475569;
+    --text-muted: #64748b;
+  }
+}

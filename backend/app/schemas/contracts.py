@@ -26,6 +26,8 @@ class EvidenceStatus(str, Enum):
     PROBABILISTIC = "PROBABILISTIC"
     INSUFFICIENT = "INSUFFICIENT"
     DISPUTED = "DISPUTED"
+    UNVERIFIED = "UNVERIFIED"
+    LIVE_SCAN_REQUIRED = "LIVE_SCAN_REQUIRED"
 
 class RiskBandEnum(str, Enum):
     LOW = "LOW"
@@ -33,6 +35,44 @@ class RiskBandEnum(str, Enum):
     HIGH = "HIGH"
     CRITICAL = "CRITICAL"
     UNKNOWN = "UNKNOWN"
+
+class DecimalProvenanceSource(str, Enum):
+    AUTHENTICATED_RPC_EVIDENCE = "AUTHENTICATED_RPC_EVIDENCE"
+    TRUSTED_PROVIDER_EVIDENCE = "TRUSTED_PROVIDER_EVIDENCE"
+    ONCHAIN_RPC_MINT_DATA = "ONCHAIN_RPC_MINT_DATA"
+    ONCHAIN_RPC_STATIC_CALL = "ONCHAIN_RPC_STATIC_CALL"
+    RPC_NODE = "RPC_NODE"
+    OFFICIAL_REGISTRY = "OFFICIAL_REGISTRY"
+    OFFICIAL_SPL_MINT = "OFFICIAL_SPL_MINT"
+    OFFICIAL_EIP20_REGISTRY = "OFFICIAL_EIP20_REGISTRY"
+    CORE_TEST = "CORE_TEST"
+    CONTROLLED_TEST_FIXTURE = "CONTROLLED_TEST_FIXTURE"
+    SYNTHETIC_TEST_FIXTURE = "SYNTHETIC_TEST_FIXTURE"
+    STATIC_SEED = "STATIC_SEED"
+    SEED_REGISTRY = "SEED_REGISTRY"
+    DISCOVERY_METADATA = "DISCOVERY_METADATA"
+    UNVERIFIED = "UNVERIFIED"
+
+AUTHORITATIVE_DECIMAL_PROVENANCE_SOURCES = {
+    DecimalProvenanceSource.AUTHENTICATED_RPC_EVIDENCE.value,
+    DecimalProvenanceSource.TRUSTED_PROVIDER_EVIDENCE.value,
+    DecimalProvenanceSource.ONCHAIN_RPC_MINT_DATA.value,
+    DecimalProvenanceSource.ONCHAIN_RPC_STATIC_CALL.value,
+    DecimalProvenanceSource.RPC_NODE.value,
+    DecimalProvenanceSource.OFFICIAL_REGISTRY.value,
+    DecimalProvenanceSource.OFFICIAL_SPL_MINT.value,
+    DecimalProvenanceSource.OFFICIAL_EIP20_REGISTRY.value,
+    DecimalProvenanceSource.CORE_TEST.value,
+}
+
+UNAUTHORIZED_DECIMAL_PROVENANCE_SOURCES = {
+    DecimalProvenanceSource.CONTROLLED_TEST_FIXTURE.value,
+    DecimalProvenanceSource.SYNTHETIC_TEST_FIXTURE.value,
+    DecimalProvenanceSource.STATIC_SEED.value,
+    DecimalProvenanceSource.SEED_REGISTRY.value,
+    DecimalProvenanceSource.DISCOVERY_METADATA.value,
+    DecimalProvenanceSource.UNVERIFIED.value,
+}
 
 # Discovery Schemas
 class TokenDiscoveryResponse(BaseModel):
@@ -106,13 +146,13 @@ class FirstBuyerItem(BaseModel):
 
 class FirstBuyersForensicsResponse(BaseModel):
     mint_address: str
-    pool_address: str
+    pool_address: Optional[str] = None
     deployer_address: Optional[str] = None
-    total_first_buyers_held_pct: Decimal
-    bundler_cluster_detected: bool
+    total_first_buyers_held_pct: Optional[Decimal] = None
+    bundler_cluster_detected: Optional[bool] = None
     evidence_status: EvidenceStatus
     detector_version: str = "v1"
-    buyers: List[FirstBuyerItem]
+    buyers: List[FirstBuyerItem] = []
 
 # News & Narrative Schemas
 class NewsFeedItem(BaseModel):
@@ -152,6 +192,8 @@ class PaperOrderRequest(BaseModel):
     input_amount_raw: Decimal = Field(..., gt=0, description="Exact raw units spent")
     max_slippage_bps: int = Field(default=150, ge=10, le=2000)
     chain_id: str = Field(default="solana:mainnet", description="CAIP-2 Chain Identifier")
+    origin: Optional[str] = Field(default="MANUAL", description="Origin: MANUAL or STRATEGY_PROPOSAL")
+    proposal_id: Optional[str] = Field(default=None, description="Optional proposal_id for strategy orders")
 
 class PaperExecutionEventDTO(BaseModel):
     event_id: str

@@ -3,47 +3,94 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
-  <meta name="description" content="Multi-Chain Memecoin Intelligence, Forensics & Paper Trading Operating System">
+  <meta name="description" content="Multi-Chain Memecoin Intelligence, Forensics & Paper Trading Operating System — Command Center">
   <meta name="theme-color" content="#090d16">
-  <title>Memecoin Intelligence & Forensics OS</title>
+  <title>MEMECOIN OS — Command Center</title>
   <link rel="stylesheet" href="/static/css/design_system.css">
 </head>
 <body>
   <div class="app-shell">
-    <!-- Desktop & Laptop Persistent Sidebar (Collapsed on Tablet) -->
+    <!-- Desktop & Laptop Persistent Sidebar -->
     <aside class="sidebar" id="app-sidebar" aria-label="Main Navigation">
       <div class="sidebar-header p-5 border-b border-subtle flex items-center justify-between">
         <div class="brand flex items-center gap-3">
-          <span class="brand-logo text-xl" aria-hidden="true">⚡</span>
-          <span class="brand-title font-bold font-mono tracking-tight text-primary">MEMECOIN OS</span>
+          <span class="brand-logo text-brand" aria-hidden="true">
+            <svg class="icon icon-lg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          </span>
+          <div>
+            <span class="brand-title font-bold font-mono tracking-tight text-primary block leading-none">MEMECOIN OS</span>
+          </div>
         </div>
       </div>
       <nav class="sidebar-nav">
-        <a href="#overview" class="nav-link active" data-view="overview" aria-current="page">
-          <span class="nav-icon" aria-hidden="true">📊</span>
+        <a href="#overview" class="nav-link active" data-view="overview" aria-current="page" role="tab" aria-label="Command Center Overview">
+          <span class="nav-icon" aria-hidden="true">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
+          </span>
           <span class="nav-label">Overview</span>
         </a>
-        <a href="#screener" class="nav-link" data-view="screener">
-          <span class="nav-icon" aria-hidden="true">🔍</span>
-          <span class="nav-label">Multi-Chain Screener</span>
+        <a href="#screener" class="nav-link" data-view="screener" role="tab" aria-label="Market Intelligence Screener">
+          <span class="nav-icon" aria-hidden="true">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          </span>
+          <span class="nav-label">Market Intelligence</span>
         </a>
-        <a href="#forensics" class="nav-link" data-view="forensics">
-          <span class="nav-icon" aria-hidden="true">🛡️</span>
+        <a href="#forensics" class="nav-link" data-view="forensics" role="tab" aria-label="Forensics and Security">
+          <span class="nav-icon" aria-hidden="true">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          </span>
           <span class="nav-label">Forensics & Security</span>
         </a>
-        <a href="#paper" class="nav-link" data-view="paper">
-          <span class="nav-icon" aria-hidden="true">📈</span>
-          <span class="nav-label">Paper Desks (12)</span>
+        <a href="#chains" class="nav-link" data-view="chains" role="tab" aria-label="Multi-Chain Explorer (12 Networks)">
+          <span class="nav-icon" aria-hidden="true">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10z"/></svg>
+          </span>
+          <span class="nav-label">Multi-Chain (12)</span>
         </a>
-        <a href="#alerts" class="nav-link" data-view="alerts">
-          <span class="nav-icon" aria-hidden="true">🔔</span>
+        <a href="#paper" class="nav-link" data-view="paper" role="tab" aria-label="Paper Desks, Orders & Fills">
+          <span class="nav-icon" aria-hidden="true">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+          </span>
+          <span class="nav-label">Paper Trading</span>
+        </a>
+        <a href="#strategies" class="nav-link" data-view="strategies" role="tab" aria-label="Strategy Analytics & Signals">
+          <span class="nav-icon" aria-hidden="true">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg>
+          </span>
+          <span class="nav-label">Strategy Analytics</span>
+        </a>
+        <a href="#risk" class="nav-link" data-view="risk" role="tab" aria-label="Risk & Drawdown Guardrails">
+          <span class="nav-icon" aria-hidden="true">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          </span>
+          <span class="nav-label">Risk Monitor</span>
+        </a>
+        <a href="#workflows" class="nav-link" data-view="workflows" role="tab" aria-label="Workflow & Provider Monitor">
+          <span class="nav-icon" aria-hidden="true">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          </span>
+          <span class="nav-label">Workflows & RPC</span>
+        </a>
+        <a href="#reports" class="nav-link" data-view="reports" role="tab" aria-label="Research & Performance Reports">
+          <span class="nav-icon" aria-hidden="true">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          </span>
+          <span class="nav-label">Reports & Journal</span>
+        </a>
+        <a href="#alerts" class="nav-link" data-view="alerts" role="tab" aria-label="Alerts & Live Safety Gateway">
+          <span class="nav-icon" aria-hidden="true">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+          </span>
           <span class="nav-label">Alerts & Ops</span>
         </a>
       </nav>
       <div class="sidebar-footer p-4 border-t border-subtle">
-        <div class="system-status-indicator flex items-center gap-2 text-xs text-muted">
+        <div class="system-status-indicator flex items-center gap-2 text-xs text-muted mb-2">
           <span class="status-indicator active"></span>
-          <span>12 Adapters Live</span>
+          <span>12 Chains • SQLite WAL</span>
+        </div>
+        <div class="text-xs font-mono text-muted">
+          P10.2 Core Trading OS
         </div>
       </div>
     </aside>
@@ -53,16 +100,19 @@
       <!-- Top Bar -->
       <header class="top-bar">
         <div class="top-bar-left flex items-center gap-3">
-          <span class="env-badge env-badge-research" title="Connected to real on-chain public market data with no live execution">
+          <span class="env-badge env-badge-research" title="Connected to real on-chain public market data with paper execution only">
             <span class="status-indicator active"></span> RESEARCH MODE
           </span>
-          <span class="env-badge env-badge-live-locked" title="Live execution gateway is locked. Requires explicit hardware signing authorization.">
-            🔒 LIVE LOCKED
+          <span class="env-badge env-badge-live-locked inline-flex items-center gap-1.5" title="Live trading kill-switch is active. ALLOW_LIVE_TRADING=False strictly enforced.">
+            <svg class="icon icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            <span>LIVE LOCKED</span>
           </span>
         </div>
         <div class="top-bar-right flex items-center gap-3">
-          <button id="theme-toggle-btn" class="btn btn-secondary btn-sm" aria-label="Toggle visual theme">
-            🌙 Dark
+          <span id="pm-mode-badge" class="pm-mode-pill text-xs font-mono text-success">ONLINE</span>
+          <button id="theme-toggle-btn" class="btn btn-secondary btn-sm inline-flex items-center gap-1.5" aria-label="Toggle visual theme (Dark, Light, System)">
+            <svg class="icon icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+            <span>Dark</span>
           </button>
         </div>
       </header>
@@ -70,35 +120,45 @@
       <!-- Content Container -->
       <div class="content-container">
         <!-- Filter Controls Toolbar -->
-        <div class="filter-toolbar card mb-6">
+        <div class="filter-toolbar card mb-6" id="dashboard-filter-toolbar">
           <div class="search-input-group flex-1 min-w-200">
-            <input type="text" id="global-search" class="form-input" placeholder="Search 12 chains: BONK, BRETT, PEPE, contract address..." aria-label="Search tokens">
+            <input type="text" id="global-search" class="form-input" placeholder="Search 12 chains: BONK, DEGEN, ARBAPE, contract mint address..." aria-label="Search tokens">
           </div>
-          <div class="filter-controls flex items-center gap-2">
-            <select id="chain-filter-select" class="form-select" aria-label="Select chain">
+          <div class="filter-controls flex items-center gap-2 flex-wrap">
+            <select id="chain-filter-select" class="form-select" aria-label="Select chain filter">
               <option value="ALL">All 12 Networks</option>
-              <option value="Solana">Solana (SVM)</option>
-              <option value="Base">Base (EVM)</option>
-              <option value="Ethereum">Ethereum (EVM)</option>
-              <option value="BNB Chain">BNB Chain (EVM)</option>
-              <option value="Arbitrum">Arbitrum (EVM)</option>
-              <option value="Optimism">Optimism (EVM)</option>
-              <option value="Polygon">Polygon (EVM)</option>
-              <option value="Avalanche">Avalanche (EVM)</option>
-              <option value="Sui">Sui (Move)</option>
-              <option value="Aptos">Aptos (Move)</option>
-              <option value="TON">TON (TVM)</option>
-              <option value="TRON">TRON (TVM)</option>
+              <option value="solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp">Solana (SVM)</option>
+              <option value="eip155:8453">Base (EVM)</option>
+              <option value="eip155:1">Ethereum (EVM)</option>
+              <option value="eip155:56">BNB Chain (EVM)</option>
+              <option value="eip155:42161">Arbitrum One (EVM)</option>
+              <option value="eip155:10">Optimism (EVM)</option>
+              <option value="eip155:137">Polygon PoS (EVM)</option>
+              <option value="eip155:43114">Avalanche C-Chain (EVM)</option>
+              <option value="sui:mainnet">Sui (Move)</option>
+              <option value="aptos:mainnet">Aptos (Move)</option>
+              <option value="ton:mainnet">TON (TVM)</option>
+              <option value="tron:mainnet">TRON (TVM)</option>
             </select>
-            <select id="risk-filter-select" class="form-select" aria-label="Risk gate grade">
-              <option value="ALL">All Risk Grades</option>
-              <option value="SAFE">Safe Grade Only (80+)</option>
+            <select id="risk-filter-select" class="form-select" aria-label="Select opportunity or risk filter">
+              <option value="ALL">All Scores</option>
+              <option value="SAFE">High Conviction (Score 80+)</option>
+              <option value="REJECTED">Hard Rejections Only</option>
             </select>
+            <select id="verification-filter-select" class="form-select" aria-label="Decimal verification filter">
+              <option value="ALL">All Verifications</option>
+              <option value="VERIFIED">Verified Decimals Only</option>
+              <option value="UNVERIFIED">Unverified / Stale</option>
+            </select>
+            <button id="btn-refresh" class="btn btn-secondary btn-sm inline-flex items-center gap-1.5" aria-label="Refresh Active View Data">
+              <svg class="icon icon-xs" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+              <span>Refresh</span>
+            </button>
           </div>
         </div>
 
         <!-- Dynamic View Content -->
-        <div id="view-content" class="view-content-wrapper">
+        <div id="view-content" class="view-content-wrapper" role="region" aria-live="polite">
           <!-- Populated dynamically by app.js -->
         </div>
       </div>
@@ -107,24 +167,40 @@
     <!-- Mobile Touch-Friendly Bottom Navigation (< 768px) -->
     <nav class="bottom-nav" id="app-bottom-nav" aria-label="Mobile Navigation">
       <button class="bottom-nav-item active" data-view="overview" aria-label="Overview tab">
-        <span class="bottom-nav-icon" aria-hidden="true">📊</span>
+        <span class="bottom-nav-icon" aria-hidden="true">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
+        </span>
         <span>Overview</span>
       </button>
       <button class="bottom-nav-item" data-view="screener" aria-label="Screener tab">
-        <span class="bottom-nav-icon" aria-hidden="true">🔍</span>
+        <span class="bottom-nav-icon" aria-hidden="true">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        </span>
         <span>Screener</span>
       </button>
       <button class="bottom-nav-item" data-view="forensics" aria-label="Forensics tab">
-        <span class="bottom-nav-icon" aria-hidden="true">🛡️</span>
+        <span class="bottom-nav-icon" aria-hidden="true">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        </span>
         <span>Forensics</span>
       </button>
       <button class="bottom-nav-item" data-view="paper" aria-label="Paper Desks tab">
-        <span class="bottom-nav-icon" aria-hidden="true">📈</span>
+        <span class="bottom-nav-icon" aria-hidden="true">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+        </span>
         <span>Paper</span>
       </button>
-      <button class="bottom-nav-item" data-view="alerts" aria-label="Alerts tab">
-        <span class="bottom-nav-icon" aria-hidden="true">🔔</span>
-        <span>Alerts</span>
+      <button class="bottom-nav-item" data-view="risk" aria-label="Risk Monitor tab">
+        <span class="bottom-nav-icon" aria-hidden="true">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        </span>
+        <span>Risk</span>
+      </button>
+      <button class="bottom-nav-item" data-view="reports" aria-label="Reports tab">
+        <span class="bottom-nav-icon" aria-hidden="true">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+        </span>
+        <span>Reports</span>
       </button>
     </nav>
   </div>
@@ -132,8 +208,8 @@
   <!-- Deep Forensic Dossier Modal Dialog -->
   <div id="token-modal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="token-modal-title" hidden>
     <div class="modal-card">
-      <div class="card-header border-b border-subtle pb-3 mb-4">
-        <h3 id="token-modal-title" class="card-title text-base text-primary">Token Forensic Dossier</h3>
+      <div class="card-header border-b border-subtle pb-3 mb-4 flex justify-between items-center">
+        <h3 id="token-modal-title" class="card-title text-base text-primary font-bold">Token Forensic Dossier</h3>
         <button class="btn-close" aria-label="Close dialog" data-action="close-modal">&times;</button>
       </div>
       <div id="token-modal-body" class="modal-body">

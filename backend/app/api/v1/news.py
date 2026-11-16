@@ -16,18 +16,7 @@ async def get_curated_news_feed(
 ):
     """
     Returns curated news articles and classified social narratives affecting Solana ecosystem tokens.
+    Returns empty list when no automated news aggregation pipeline is connected.
     """
-    return [
-        NewsFeedItem(
-            id="news-item-001",
-            title="Solana DeFi Volume Surges as New DEX Aggregators Launch",
-            url="https://solana.com/news/defi-growth-2024",
-            source_name="Solana Foundation Official",
-            published_at=datetime.utcnow(),
-            category="ecosystem_growth",
-            sentiment_score=Decimal("45.5"),
-            verification_status="verified",
-            affected_tokens=["So11111111111111111111111111111111111111112"],
-            affected_sectors=["defi", "infrastructure"]
-        )
-    ]
+    return []
+

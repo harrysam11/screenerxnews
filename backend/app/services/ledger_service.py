@@ -4,6 +4,7 @@ import threading
 from typing import Dict, Any, List, Optional
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime, timezone
+from app.core.config import settings
 
 USD_UNITS_SCALE = Decimal("100000000")  # 10^8 fixed-point scale factor (1 USD unit = 10^-8 USD)
 
@@ -34,16 +35,17 @@ class DoubleEntryLedgerService:
     - Atomic rollback on partial failure.
     """
     VALID_ACCOUNT_CODES = {
-        "WALLET_SOL", "WALLET_TOKEN", "EXPENSE_NETWORK_FEE", "EXPENSE_DEX_FEE", "REALIZED_PNL"
+        "WALLET_SOL", "WALLET_TOKEN", "WALLET_NATIVE", "WALLET_CASH", "WALLET_ETH", "WALLET_BNB",
+        "EXPENSE_NETWORK_FEE", "EXPENSE_DEX_FEE", "REALIZED_PNL"
     }
 
     def __init__(self, db_path: Optional[str] = None):
         if db_path is None:
-            base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../data"))
-            os.makedirs(base_dir, exist_ok=True)
-            self.db_path = os.path.join(base_dir, "ledger.db")
+            self.db_path = settings.get_canonical_sqlite_path()
         else:
             self.db_path = db_path
+        if self.db_path != ":memory:":
+            os.makedirs(os.path.dirname(os.path.abspath(self.db_path)), exist_ok=True)
 
         self._lock = threading.Lock()
         self._init_db()
@@ -176,8 +178,9 @@ class DoubleEntryLedgerService:
                 """)
                 conn.commit()
 
-    def post_journal(
+    def post_journal_in_connection(
         self,
+        conn: sqlite3.Connection,
         journal_id: str,
         idempotency_key: str,
         journal_type: str,
@@ -187,13 +190,9 @@ class DoubleEntryLedgerService:
         order_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Atomically posts a double-entry balanced journal.
-        - LEDGER-01: Balanced journal succeeds.
-        - LEDGER-02: Unbalanced journal fails.
-        - LEDGER-03: Empty journal fails (< 2 lines).
-        - LEDGER-04: Single-line journal fails (< 2 lines).
-        - LEDGER-07: Atomic rollback on failure.
-        - LEDGER-08: Duplicate posting rejected.
+        Validates double-entry invariants and inserts the journal and lines
+        within an existing SQLite connection/transaction.
+        Fires database triggers on status update to POSTED.
         """
         # 1. LEDGER-03 & LEDGER-04: Validate Line Count (>= 2 lines required)
         if not lines or len(lines) < 2:
@@ -250,57 +249,90 @@ class DoubleEntryLedgerService:
 
         now_iso = datetime.now(timezone.utc).isoformat()
 
-        # 3. Atomic Database Insertion with Rollback Protection
+        # Check idempotency duplicate
+        cur = conn.execute("SELECT id FROM ledger_journals WHERE idempotency_key = ?", (idempotency_key,))
+        if cur.fetchone():
+            raise DuplicatePostingError(
+                f"DUPLICATE POSTING VIOLATION (LEDGER-08): Idempotency key '{idempotency_key}' already consumed."
+            )
+
+        conn.execute("""
+            INSERT INTO ledger_journals (
+                id, transaction_signature, order_id, idempotency_key, journal_type, description, status, posted_at
+            ) VALUES (?, ?, ?, ?, ?, ?, 'DRAFT', ?)
+        """, (
+            journal_id, transaction_signature, order_id, idempotency_key, journal_type, description, now_iso
+        ))
+
+        for pl in parsed_lines:
+            conn.execute("""
+                INSERT INTO ledger_lines (
+                    journal_id, account_code, wallet_address, mint_address,
+                    debit_amount_raw, credit_amount_raw, usd_rate,
+                    debit_usd_units, credit_usd_units
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                journal_id, pl["account_code"], pl["wallet_address"], pl["mint_address"],
+                pl["debit_amount_raw"], pl["credit_amount_raw"], pl["usd_rate"],
+                pl["debit_usd_units"], pl["credit_usd_units"]
+            ))
+
+        # Database trigger fires on UPDATE to POSTED: verifies lines >= 2 and exact integer balance == 0
+        conn.execute("""
+            UPDATE ledger_journals
+            SET status = 'POSTED'
+            WHERE id = ?
+        """, (journal_id,))
+
+        return {
+            "journal_id": journal_id,
+            "idempotency_key": idempotency_key,
+            "status": "POSTED",
+            "lines_count": len(parsed_lines),
+            "total_usd": str(total_debits_usd),
+            "posted_at": now_iso
+        }
+
+    def post_journal(
+        self,
+        journal_id: str,
+        idempotency_key: str,
+        journal_type: str,
+        description: str,
+        lines: List[Dict[str, Any]],
+        transaction_signature: Optional[str] = None,
+        order_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Atomically posts a double-entry balanced journal.
+        - LEDGER-01: Balanced journal succeeds.
+        - LEDGER-02: Unbalanced journal fails.
+        - LEDGER-03: Empty journal fails (< 2 lines).
+        - LEDGER-04: Single-line journal fails (< 2 lines).
+        - LEDGER-07: Atomic rollback on failure.
+        - LEDGER-08: Duplicate posting rejected.
+        """
         with self._lock:
             conn = self._get_connection()
             try:
-                # Check idempotency duplicate
-                cur = conn.execute("SELECT id FROM ledger_journals WHERE idempotency_key = ?", (idempotency_key,))
-                if cur.fetchone():
-                    raise DuplicatePostingError(
-                        f"DUPLICATE POSTING VIOLATION (LEDGER-08): Idempotency key '{idempotency_key}' already consumed."
-                    )
-
-                conn.execute("BEGIN TRANSACTION;")
-                conn.execute("""
-                    INSERT INTO ledger_journals (
-                        id, transaction_signature, order_id, idempotency_key, journal_type, description, status, posted_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, 'DRAFT', ?)
-                """, (
-                    journal_id, transaction_signature, order_id, idempotency_key, journal_type, description, now_iso
-                ))
-
-                for pl in parsed_lines:
-                    conn.execute("""
-                        INSERT INTO ledger_lines (
-                            journal_id, account_code, wallet_address, mint_address,
-                            debit_amount_raw, credit_amount_raw, usd_rate,
-                            debit_usd_units, credit_usd_units
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        journal_id, pl["account_code"], pl["wallet_address"], pl["mint_address"],
-                        pl["debit_amount_raw"], pl["credit_amount_raw"], pl["usd_rate"],
-                        pl["debit_usd_units"], pl["credit_usd_units"]
-                    ))
-
-                # Database trigger fires on UPDATE to POSTED: verifies lines >= 2 and exact integer balance == 0
-                conn.execute("""
-                    UPDATE ledger_journals
-                    SET status = 'POSTED'
-                    WHERE id = ?
-                """, (journal_id,))
-
-                conn.commit()
-                return {
-                    "journal_id": journal_id,
-                    "idempotency_key": idempotency_key,
-                    "status": "POSTED",
-                    "lines_count": len(parsed_lines),
-                    "total_usd": str(total_debits_usd),
-                    "posted_at": now_iso
-                }
+                conn.execute("BEGIN IMMEDIATE;")
+                result = self.post_journal_in_connection(
+                    conn=conn,
+                    journal_id=journal_id,
+                    idempotency_key=idempotency_key,
+                    journal_type=journal_type,
+                    description=description,
+                    lines=lines,
+                    transaction_signature=transaction_signature,
+                    order_id=order_id
+                )
+                conn.execute("COMMIT;")
+                return result
             except Exception as e:
-                conn.rollback()
+                try:
+                    conn.execute("ROLLBACK;")
+                except Exception:
+                    pass
                 if "UNIQUE constraint failed" in str(e):
                     raise DuplicatePostingError(f"Duplicate posting rejected: {e}")
                 raise
@@ -315,6 +347,18 @@ class DoubleEntryLedgerService:
                 return None
             journal = dict(j_row)
             l_cur = conn.execute("SELECT * FROM ledger_lines WHERE journal_id = ? ORDER BY id ASC", (journal_id,))
+            journal["lines"] = [dict(r) for r in l_cur.fetchall()]
+            return journal
+
+    def get_journal_by_order_id(self, order_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieves the latest posted journal for a given order or intent ID."""
+        with self._get_connection() as conn:
+            cur = conn.execute("SELECT * FROM ledger_journals WHERE order_id = ? ORDER BY posted_at DESC LIMIT 1;", (order_id,))
+            j_row = cur.fetchone()
+            if not j_row:
+                return None
+            journal = dict(j_row)
+            l_cur = conn.execute("SELECT * FROM ledger_lines WHERE journal_id = ? ORDER BY id ASC;", (journal["id"],))
             journal["lines"] = [dict(r) for r in l_cur.fetchall()]
             return journal
 

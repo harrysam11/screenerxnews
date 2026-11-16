@@ -34,6 +34,14 @@ class EvmProviderManager:
         }
 
     def get_active_endpoint(self, chain_id: str) -> Optional[str]:
+        try:
+            from app.services.provider_manager import provider_manager
+            db_endpoint = provider_manager.get_active_rpc_endpoint(chain_id)
+            if db_endpoint:
+                return db_endpoint
+        except Exception:
+            pass
+
         endpoints = self.providers.get(chain_id, [])
         now = time.monotonic()
         for ep in sorted(endpoints, key=lambda x: x.priority):

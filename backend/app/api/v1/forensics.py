@@ -22,27 +22,23 @@ async def get_token_forensics(
     """
     return TokenSecurityReport(
         mint_address=mint,
-        token_program="TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
-        is_token_2022=TriState.FALSE,
-        is_mint_revoked=TriState.TRUE,
-        is_freeze_revoked=TriState.TRUE,
-        is_honeypot=TriState.FALSE,
-        transfer_fee_bps=0,
-        lp_status="burned",
-        lp_burned=TriState.TRUE,
-        lp_burned_pct=Decimal("100.00"),
-        top10_concentration_pct=Decimal("18.40"),
-        holder_coverage_pct=Decimal("95.50"),
-        risk_score=Decimal("12.5"),
-        risk_level="LOW",
-        confidence=EvidenceStatus.VERIFIED,
-        findings=[
-            FindingItem(code="MINT_AUTH_REVOKED", severity="INFO", description="Mint authority is permanently disabled"),
-            FindingItem(code="FREEZE_AUTH_REVOKED", severity="INFO", description="Freeze authority is disabled"),
-            FindingItem(code="LP_BURNED", severity="INFO", description="100% of initial LP tokens sent to burn address")
-        ],
+        token_program=None,
+        is_token_2022=TriState.UNKNOWN,
+        is_mint_revoked=TriState.UNKNOWN,
+        is_freeze_revoked=TriState.UNKNOWN,
+        is_honeypot=TriState.UNKNOWN,
+        transfer_fee_bps=None,
+        lp_status="unknown",
+        lp_burned=TriState.UNKNOWN,
+        lp_burned_pct=Decimal("0.00"),
+        top10_concentration_pct=Decimal("0.00"),
+        holder_coverage_pct=Decimal("0.00"),
+        risk_score=Decimal("0.0"),
+        risk_level="UNVERIFIED",
+        confidence=EvidenceStatus.UNVERIFIED,
+        findings=[],
         scanned_at=datetime.now(timezone.utc),
-        is_stale=False
+        is_stale=True
     )
 
 @router.get("/first-buyers/{mint}", response_model=FirstBuyersForensicsResponse)
@@ -52,37 +48,15 @@ async def get_first_buyers_forensics(
 ):
     """
     Reconstructs the first 10 buyers, checks funding sources, and detects bundled insider buys.
+    Returns unverified status when no live indexing pipeline is active.
     """
-    # Sample reconstructed earliest transactions for mock/demo until live indexer populates DB
-    mock_creation_slot = 280000100
-    mock_deployer = "DeployerRootWallet111111111111111111111111"
-    raw_txs = [
-        {
-            "tx_signature": f"sig_{i}",
-            "slot": mock_creation_slot,
-            "wallet_address": f"BuyerWallet{i}{'1'*20}",
-            "sol_spent_lamports": 1250000000 - (i * 100000000),
-            "tokens_bought_raw": Decimal("5000000000000") - (i * Decimal("500000000000")),
-            "funder_address": "BinanceHotWallet11111111111111111111111111",
-            "holding_pct": Decimal("2.10") - (Decimal(str(i)) * Decimal("0.2"))
-        }
-        for i in range(1, 6)
-    ]
-
-    analysis = first_buyers_decoder.analyze_buyers(
-        pool_address="PoolAddressExample111111111111111111111111111",
-        deployer_address=mock_deployer,
-        creation_slot=mock_creation_slot,
-        raw_transactions=raw_txs
-    )
-
     return FirstBuyersForensicsResponse(
         mint_address=mint,
-        pool_address="PoolAddressExample111111111111111111111111111",
-        deployer_address=mock_deployer,
-        total_first_buyers_held_pct=analysis["total_held_pct"],
-        bundler_cluster_detected=analysis["bundler_cluster_detected"],
-        evidence_status=analysis["confidence"],
+        pool_address=None,
+        deployer_address=None,
+        total_first_buyers_held_pct=None,
+        bundler_cluster_detected=None,
+        evidence_status=EvidenceStatus.UNVERIFIED,
         detector_version=WalletClusterEngine.DETECTOR_VERSION,
-        buyers=analysis["buyers"]
+        buyers=[]
     )

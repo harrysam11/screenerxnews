@@ -6,9 +6,12 @@ from decimal import Decimal
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.abspath("./backend"))
+from app.core.config import settings
+settings.APP_ENV = "test"
 from app.main import app
 from app.schemas.contracts import PaperOrderRequest
 from app.services.paper_simulation_engine import PaperSimulationEngine, paper_simulation_engine
+from tests.fixtures.test_asset_helper import register_test_asset_fixture
 
 client = TestClient(app)
 
@@ -77,6 +80,7 @@ def test_amm_price_impact_curve():
 
 def test_order_slippage_rejection():
     engine = PaperSimulationEngine()
+    register_test_asset_fixture(engine.db_path, "solana:mainnet", "0xTokenA", decimals=9, symbol="TOKA", authoritative=True)
     # Trade with high impact exceeding strict 20 bps slippage limit
     req = PaperOrderRequest(
         account_id="dummy",
@@ -121,6 +125,7 @@ def test_insufficient_virtual_balance_rejection():
 
 def test_idempotent_order_rejection():
     engine = PaperSimulationEngine()
+    register_test_asset_fixture(engine.db_path, "solana:mainnet", "0xTokenC", decimals=9, symbol="TOKC", authoritative=True)
     order_id = f"client-order-key-{uuid.uuid4()}"
     req = PaperOrderRequest(
         account_id="dummy",
@@ -150,6 +155,7 @@ def test_full_trade_cycle_and_pnl_realization():
     engine = PaperSimulationEngine()
     asset = "0xProfitableMeme"
     pool = "0xProfitablePool"
+    register_test_asset_fixture(engine.db_path, "solana:mainnet", asset, decimals=9, symbol="MEME", authoritative=True)
 
     # 1. Buy with 10 SOL at price 0.001 SOL
     buy_req = PaperOrderRequest(
@@ -222,7 +228,21 @@ def test_api_paper_multichain_endpoints():
     assert bnb_data["chain_id"] == "eip155:56"
     assert bnb_data["native_symbol"] == "BNB"
 
-    # Submit paper order on Base
+    from app.core.config import settings
+    register_test_asset_fixture(
+        db_target=settings.get_canonical_sqlite_path(),
+        chain_id="eip155:8453",
+        asset_address="0x4ed4e862860bed51a9570b96d89af5e1b0efefed",
+        decimals=18,
+        symbol="DEGEN",
+        name="Degen",
+        authoritative=True
+    )
+    import sqlite3
+    with sqlite3.connect(settings.get_canonical_sqlite_path()) as conn:
+        conn.execute("DELETE FROM paper_positions_v2 WHERE asset_address = '0x4ed4e862860bed51a9570b96d89af5e1b0efefed';")
+        conn.commit()
+
     order_payload = {
         "account_id": base_data["account_id"],
         "client_order_id": f"api-test-{uuid.uuid4()}",

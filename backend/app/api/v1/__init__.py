@@ -8,6 +8,10 @@ from app.api.v1.execution import router as execution_router
 from app.api.v1.portfolio import router as portfolio_router
 from app.api.v1.hermes import router as hermes_router
 from app.api.v1.dashboard import router as dashboard_router
+from app.api.v1.providers import router as providers_router
+from app.api.v1.strategies import router as strategies_router
+from app.api.v1.search import router as search_router
+from app.api.v1.research import router as research_router
 
 api_v1_router = APIRouter(prefix="/api/v1")
 
@@ -20,3 +24,7 @@ api_v1_router.include_router(execution_router)
 api_v1_router.include_router(portfolio_router)
 api_v1_router.include_router(hermes_router)
 api_v1_router.include_router(dashboard_router)
+api_v1_router.include_router(providers_router)
+api_v1_router.include_router(strategies_router)
+api_v1_router.include_router(search_router)
+api_v1_router.include_router(research_router)

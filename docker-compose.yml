@@ -20,10 +20,43 @@ services:
       timeout: 5s
       retries: 5
 
+  # Windmill (Primary Orchestration Engine - Version 1)
+  windmill_server:
+    image: ghcr.io/windmill-labs/windmill:latest
+    container_name: memecoin_windmill_server
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgres://${POSTGRES_USER:-memecoin_user}:${POSTGRES_PASSWORD:-memecoin_secure_pass}@postgres:5432/${POSTGRES_DB:-memecoin_os}?sslmode=disable
+      - MODE=server
+    volumes:
+      - windmill_data:/tmp/windmill
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  windmill_worker:
+    image: ghcr.io/windmill-labs/windmill:latest
+    container_name: memecoin_windmill_worker
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgres://${POSTGRES_USER:-memecoin_user}:${POSTGRES_PASSWORD:-memecoin_secure_pass}@postgres:5432/${POSTGRES_DB:-memecoin_os}?sslmode=disable
+      - MODE=worker
+      - WORKER_GROUP=default
+    volumes:
+      - windmill_data:/tmp/windmill
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # n8n (Deferred - Version 1 Standby / Optional Profile)
   n8n:
     image: docker.n8n.io/n8nio/n8n:latest
     container_name: memecoin_n8n
     restart: unless-stopped
+    profiles:
+      - n8n-optional
     ports:
       - "5678:5678"
     environment:
@@ -47,6 +80,8 @@ services:
 
 volumes:
   pgdata:
+    driver: local
+  windmill_data:
     driver: local
   n8n_data:
     driver: local

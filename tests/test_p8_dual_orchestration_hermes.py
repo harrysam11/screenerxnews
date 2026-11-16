@@ -57,16 +57,20 @@ def test_windmill_wf14_health_guardian():
 
 
 def test_windmill_wf20_paper_execution():
+    from tests.fixtures.test_asset_helper import register_test_asset_fixture
+    from app.core.config import settings
+    register_test_asset_fixture(settings.get_canonical_sqlite_path(), "solana:mainnet", "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", decimals=5, symbol="BONK", authoritative=True)
+
     res = execute_simulated_order(
         chain_id="solana:mainnet",
         asset_id="DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
         pool_id="0xbonkpool",
         side="BUY",
         input_mint="SOL",
-        output_mint="BONK",
+        output_mint="DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
         input_amount_raw=Decimal("1.5")
     )
-    assert res["status"] == "FILLED"
+    assert res["status"] == "FILLED", f"Rejected due to: {res.get('rejection_reason')}"
     assert res["side"] == "BUY"
     assert res["output_amount_raw"] > 0
 

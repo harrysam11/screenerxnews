@@ -1,0 +1,23 @@
+# Example Strategy Configurations (Phase P10.2-B)
+# Defines paper trading strategy parameters and safety limits.
+
+strategies:
+  momentum_breakout:
+    version: "1.0"
+    description: "Volume-confirmed breakout with strict forensic filtering"
+    min_liquidity_usd: 15000.0
+    min_volume_24h_usd: 50000.0
+    max_slippage_bps: 150
+    take_profit_pct: 25.0
+    stop_loss_pct: 10.0
+    require_burned_or_locked_lp: true
+    require_renounced_mint: true
+
+  safety_first_accumulator:
+    version: "1.0"
+    description: "Low-risk paper testing for top forensic scores"
+    min_forensic_score: 85.0
+    max_top10_holder_pct: 20.0
+    max_slippage_bps: 100
+    take_profit_pct: 15.0
+    stop_loss_pct: 5.0
